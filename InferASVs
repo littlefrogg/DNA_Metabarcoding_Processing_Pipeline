@@ -1,0 +1,120 @@
+# Filter Reads, Trim Reads, Infer Amplicon Sequence Variants (ASVs)
+
+##Creating filepath to data 
+pathinput <- here("inputs/trimmed_ROHR01_CO1")
+head(list.files(pathinput)) #eventually to check if the path works
+
+##File preparation
+#extracting Forward (fnFs) and Reverse (fnRs) reads from files
+fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq"))
+fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq"))
+sample.names <- sapply(strsplit(fnFs, "_"), `[`, 1)
+fnFs <-file.path(pathinput, fnFs)
+fnRs <-file.path(pathinput, fnRs)
+
+#plotting quality profiles
+# qprofile_fwd <- print(plotQualityProfile(fnFs, aggregate = TRUE) 
+#                      + ggtitle("Forward"))
+# qprofile_rev <- print(plotQualityProfile(fnRs, aggregate = TRUE) 
+#                     + ggtitle("Reverse"))
+# these may take a few minutes to run
+# decide where to cut off ends (around where quality score dips below 30)
+# change truncLen below accordingly
+
+#placing filtered files in a new filtered subdirectory
+filtFs <- file.path(pathinput, "filtered", paste0(sample.names, "_F_filt.fastq"))
+filtRs <- file.path(pathinput, "filtered", paste0(sample.names, "_R_filt.fastq"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+#filtering and trimming, here truncation at 220 (Fwd) and 200 (Rev) bp, 
+#2expected errors max (N discarded automatically)
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(220,200),
+                     maxN=0, maxEE=2, truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+
+head(out) #to check how filtering and trimming worked
+
+#learning error rates
+errF <- learnErrors(filtFs, multithread = TRUE)
+errR <- learnErrors(filtRs, multithread = TRUE)
+#plotting errors
+#plotErrors(errF, nominalQ=TRUE)
+#plotErrors(errR, nominalQ=TRUE)
+# the points should follow the black lines fairly well - ignore the red lines
+
+##Dereplicating reads
+exists <- file.exists(filtFs) & file.exists(filtRs)
+filtFs_passed <- filtFs[exists]
+filtRs_passed <- filtRs[exists]
+
+sam.names <- sapply(strsplit(basename(filtFs_passed), "_"), `[`, 1)
+derepFs <- derepFastq(filtFs_passed)
+names(derepFs) <- sam.names
+derepRs <- derepFastq(filtRs_passed)
+names(derepRs) <- sam.names
+
+##Infering Sequence Variants
+dadaFs <- dada(derepFs, err = errF, pool = "pseudo", multithread = TRUE)
+dadaFs[[1]]
+dadaRs <- dada(derepRs, err = errR, pool = "pseudo", multithread = TRUE)
+dadaRs[[1]]
+
+##Merging paired ends
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs)
+ROHR01 <- makeSequenceTable(mergers)
+dim(ROHR01)
+#[1]   117 8394
+table(nchar(getSequences(ROHR01)))
+
+#exporting files to use in the next part of the workflow
+pathoutput <- here("outputs/ROHR01/ROHR01.rds")
+saveRDS(ROHR01, pathoutput)
+
+ROHR01 = readRDS(here("outputs/ROHR01/ROHR01.rds"))
+#identifying and removing chimeras
+ROHR01.nochim <- removeBimeraDenovo(ROHR01, method="pooled", multithread=TRUE)
+dim(ROHR01.nochim)
+#[1]  117 7522 for ROHR01
+
+##tracking changes through each step 
+getN <- function(x) sum(getUniques(x))
+
+# turn reads.in and reads.out in out dataframe into two separate vectors 
+reads_in <- out[, "reads.in"]   # Extracts the first column
+reads_out <- out[, "reads.out"] # Extracts the second column
+
+# to avoid cutting out data of different lengths, need to add NAs to short columns 
+max_length <- max(length(reads_in),
+                  length(reads_out),
+                  length(sapply(dadaFs, getN)), 
+                  length(sapply(dadaRs, getN)), 
+                  length(sapply(mergers, getN)), 
+                  length(rowSums(ROHR01.nochim)))
+
+pad_vector <- function(vec, max_length) {
+  length(vec) <- max_length
+  return(vec)
+}
+
+reads_in <- pad_vector(reads_in, max_length)
+reads_out <- pad_vector(reads_out, max_length)
+dadaFs_N <- pad_vector(sapply(dadaFs, getN), max_length)
+dadaRs_N <- pad_vector(sapply(dadaRs, getN), max_length)
+mergers_N <- pad_vector(sapply(mergers, getN), max_length)
+nochim_N <- pad_vector(rowSums(ROHR01.nochim), max_length)
+sam.names <- pad_vector(sam.names, max_length)
+
+track <- cbind(reads_in, reads_out, dadaFs_N, dadaRs_N, mergers_N, nochim_N)
+rownames(track) <- sam.names
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR",
+                     "merged", "nonchim")
+
+#save text file of tracking table
+pathoutput_tracktable <- here("outputs/ROHR01/ROHR01_read_changes.txt")
+write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE,
+            col.names=NA)
+
+# save rds of data with chimeras removed 
+pathoutput_nochim_rds <- here("outputs/ROHR01/ROHR01.nochim.rds")
+saveRDS(ROHR01.nochim, pathoutput_nochim_rds)
