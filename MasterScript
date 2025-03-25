@@ -1,0 +1,75 @@
+# Master Script for eDNA sequence analysis pipeline #
+# Paige Smallman, 2025
+
+################################################################
+# (1) SET UP
+################################################################
+
+# load neccesary packages 
+library(dada2)
+library(here)
+library(ggplot2)
+library(phyloseq)
+library(decontam)
+library(metagMisc)
+library(devtools)
+library(lulu)
+library(DECIPHER)
+library(rBLAST)
+library(tidyverse)
+# if any above packages dont load, use install.packages()
+
+## Metadata ##
+metadata <- here("inputs/metadata/metadata.csv")
+#reading the sample data sheet
+metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = NULL)
+
+################################################################
+# (2) CUT ADAPT
+################################################################
+
+## paste following cutadapt code in linux/terminal
+
+################################################################
+# (3) INFER ASV's with DADA2
+################################################################
+
+
+source(Infer_ASVs_DADA2.R)
+
+################################################################
+# (4) ASSIGN TAXONOMY DADA2
+################################################################
+
+
+################################################################
+# (5) CREATE PHYLOSEQ
+################################################################
+
+
+################################################################
+# (6) MARKER SPECIFIC
+################################################################
+
+## CO1 ---------------------------------------------------------------------
+
+# Remove contaminants with Decontam
+
+# Cluster ASVs with Decipher
+
+# Create match list with Vsearch
+
+# Curate OTUs with lulu
+
+#Assign taxonomy with BLAST
+
+#Curation LCA with Galaxy tool
+
+
+## 12S -------------------------------------------------------------------
+
+# Remove contaminants with Decontam
+
+# Assign taxonomy with BLAST
+
+# Curation LCA with Galaxy tool
