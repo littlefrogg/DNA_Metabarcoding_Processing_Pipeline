@@ -1,4 +1,4 @@
-# Master Script for eDNA sequence analysis pipeline #
+# Main Script for eDNA sequence analysis pipeline #
 # Paige Smallman, 2025
 
 ################################################################
@@ -17,12 +17,15 @@ library(lulu)
 library(DECIPHER)
 library(rBLAST)
 library(tidyverse)
+library(phangorn)
 # if any above packages dont load, use install.packages()
 
 ## Metadata ##
 metadata <- here("inputs/metadata/metadata.csv")
 #reading the sample data sheet
 metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = NULL)
+#check metadata
+# View(metadata)
 
 ################################################################
 # (2) CUT ADAPT
@@ -30,12 +33,19 @@ metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = NULL)
 
 ## paste following cutadapt code in linux/terminal
 
+
 ################################################################
 # (3) INFER ASV's with DADA2
 ################################################################
 
+# set up variables
+pathinput <- here("inputs/trimmed_ROHR05_12S")
+table_name <- "ROHR05_table"
+pathoutput <- here("outputs/ROHR05/ROHR05.rds")
+pathoutput_tracktable <- here("outputs/ROHR05/ROHR05_read_changes.txt")
+pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
 
-source(Infer_ASVs_DADA2.R)
+source(Infer_ASVs_DADA2.R) # this script if filtered inputs already exist
 
 ################################################################
 # (4) ASSIGN TAXONOMY DADA2
