@@ -1,0 +1,595 @@
+################################################################
+#####     eDNA - 12S MiFish E2 - ROHR_37_miseq_Saul     #######
+################################################################
+#
+# SCRIPT prepared by Matthieu Leray ||| Modified by Helio Quintero-Arrieta 
+# and Maria Andrea Lacayo ||| March 11th 2025 |||
+
+
+# Steps followed
+
+# (1) Assemble metadata
+# (2) Filter raw reads & Infer Amplicon Sequence Variants (ASVs)
+# (3) Assign taxonomy
+# (4) Create Phyloseq object
+# (5) Remove contaminants, control and outlier samples
+# (6) ASV curation
+# (7) Taxonomic assignments with BLAST
+# (8) Make a phylogenetic tree
+# (9) Create curated Phyloseq object
+
+
+# Load packages
+library(dada2)
+library(ggplot2)
+library(phyloseq)
+library(decontam)
+library(metagMisc)
+library(lulu)
+library(stringr)
+library(DECIPHER)
+library(phangorn)
+library(speedyseq)
+library(Biostrings)
+
+################################################################
+# (1) Assemble metadata
+################################################################
+
+# Sample list
+SampleList <- "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/metadata.csv" # mis dos columnas
+#reading the sample data sheet
+SampleList <- read.csv(SampleList, header=TRUE, sep = ",", row.names = NULL)
+
+# DNA extract database
+DNAdatabase <- "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/RRR eDNA extracs Saul R. - Base de datos.csv" # mis metadatos
+#reading the sample data sheet
+DNAdatabase <- read.csv(DNAdatabase, header=TRUE, sep = ",")
+
+# Combine the two tables
+joined_df <- merge(SampleList, DNAdatabase, by = "DNAID",all.x = TRUE, all.y = FALSE)
+write.csv(joined_df, '/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/joined.csv', row.names = FALSE)
+
+# Open updated metadata
+joined_upt <- "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/joined.csv"
+#reading the sample data sheet
+
+metadata <- read.csv(joined_upt, header=TRUE, sep = ",", row.names = NULL)
+
+
+################################################################
+# (2) Filter raw reads & Infer Amplicon Sequence Variants (ASVs)
+################################################################
+
+##Creating filepaths to data
+#path for when onedrive doesn't want to sync
+path <- "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/trimmed_used"
+#
+head(list.files(path)) #eventually to check if the path works
+
+
+##File preparation
+#extracting Forward (fnFs) and Reverse (fnRs) reads from files
+fnFs <- sort(list.files(path, pattern = "_R1_001.trimmed.fastq"))
+fnRs <- sort(list.files(path, pattern = "_R2_001.trimmed.fastq"))
+sample.names <- sapply(strsplit(fnFs, "_"), `[`, 1)
+fnFs <-file.path(path, fnFs)
+fnRs <-file.path(path, fnRs)
+
+#plotting quality profiles
+#qprofile_fwd <- print(plotQualityProfile(fnFs, aggregate = TRUE)
+#                      + ggtitle("Forward"))
+#qprofile_rev <- print(plotQualityProfile(fnRs, aggregate = TRUE)
+#                      + ggtitle("Reverse"))
+Sys.time()
+qprofile_fwd <- plotQualityProfile(fnFs, aggregate = TRUE)
+Sys.time()
+Sys.time()
+qprofile_rev <- plotQualityProfile(fnRs, aggregate = TRUE)
+Sys.time()
+print(qprofile_fwd) + ggtitle("Forward")
+print(qprofile_rev) + ggtitle("Reverse")
+
+#placing filtered files in a new filtered subdirectory
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+
+
+#filtering and trimming, here truncation at 150 (Fwd) and 110 (Rev) bp,
+#2expected errors max (N discarded automatically)
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(180,150),
+                     maxN=0, maxEE=2, truncQ=2, rm.phix=TRUE,
+                     compress=TRUE, multithread=TRUE)
+
+head(out) #eventually to check how filtering and trimming worked
+
+ #If not all samples had sequences after filtering, keep only the ones that do
+exists0<- file.exists(filtFs) & file.exists(filtRs) #Check which samples were written in the directory
+#Keep only the samples with reads after filtration
+filtFs <- filtFs[exists0]
+filtRs <- filtRs[exists0]
+
+#learning error rates
+errF <- learnErrors(filtFs, multithread = TRUE)
+errR <- learnErrors(filtRs, multithread = TRUE)
+#plotting errors
+plotErrors(errF, nominalQ=TRUE)
+plotErrors(errR, nominalQ=TRUE)
+
+##Dereplicating reads
+sam.names <- sapply(strsplit(basename(filtFs), "_"), `[`, 1)
+derepFs <- derepFastq(filtFs)
+names(derepFs) <- sam.names
+derepRs <- derepFastq(filtRs)
+names(derepRs) <- sam.names
+
+##Infering Sequence Variants
+dadaFs <- dada(derepFs, err = errF, pool = "pseudo", multithread = TRUE)
+dadaFs[[1]]
+dadaRs <- dada(derepRs, err = errR, pool = "pseudo", multithread = TRUE)
+dadaRs[[1]]
+
+##Merging paired ends
+mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs)
+ROHR37_otutableRaw <- makeSequenceTable(mergers)
+dim(ROHR37_otutableRaw)
+#[1]  123 2732
+table(nchar(getSequences(ROHR37_otutableRaw)))
+
+#exporting files to use in the next part of the workflow
+saveRDS(ROHR37_otutableRaw, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_otutableRaw.rds")
+
+#identifying and removing chimeras
+ROHR37_otutable_nochimera <- removeBimeraDenovo(ROHR37_otutableRaw,
+                                    method="pooled",
+                                    multithread=TRUE)
+dim(ROHR37_otutable_nochimera)
+#[1]  123 2121
+#Removing from out the files that are not present in the next steps
+#out.act <- out[out[,2] !=0, , drop = F]. ##not used because all files passed the quality check
+#tracking changes through each step ###Lograr que las muestras que no tenian secuencias no aparezcan para que coincidan las filas
+getN <- function(x) sum(getUniques(x))
+track <-    cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN),
+                  sapply(mergers, getN), rowSums(ROHR37_otutable_nochimera))
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR",
+                     "merged", "nonchim")
+rownames(track) <- sam.names
+write.table(track, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/MuddyDNA/NEW DATA/1Dada2/ROHR26_read_changes.txt", sep = "\t", quote = FALSE,
+            col.names=NA)
+
+saveRDS(ROHR37_otutable_nochimera, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_otutable_nochimera.rds")
+
+
+################################################################
+# (3) Assign taxonomy
+################################################################
+
+ROHR37_otutable_nochimera = readRDS("/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_otutable_nochimera.rds")
+
+#assigning taxonomy MIDORI2 version GB264
+#reference dataset formatted for DADA2 can be found here: http://www.reference-midori.info/
+set.seed(119)
+ROHR37_taxtable <- assignTaxonomy(ROHR37_otutable_nochimera,
+                                    "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta",
+                                    multithread=TRUE)
+saveRDS(ROHR37_taxtable, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_taxtable.rds")
+
+
+# Inspect taxonomic assignments
+taxa.print <- ROHR37_taxtable # Removing sequence rownames for display only
+rownames(taxa.print) <- NULL
+head(taxa.print)
+
+DADA_tax  = tax_table(ROHR37_taxtable)
+write.csv(DADA_tax, file="/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_taxtable.csv")
+
+DADA_otu  = otu_table(ROHR37_otutable_nochimera, taxa_are_rows = FALSE)
+write.csv(DADA_otu, file="/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_otutable_nochimeraROHR37.csv")
+
+
+
+################################################################
+# (4) Create Phyloseq object
+################################################################
+
+# Read RDS object
+ROHR37_taxtable = readRDS("/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_taxtable.rds")
+ROHR37_otutable_nochimera = readRDS("/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/1DADA2_ROHR37/ROHR37_otutable_nochimera.rds")
+
+dim(ROHR37_taxtable)
+# [1] 2121    6
+dim(ROHR37_otutable_nochimera)
+# [1]  123 2121
+
+##Creating phyloseq object
+##Opening and extracting sample data from a .csv file
+#creating path to the .csv
+ROHR37_sam <- "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/joined.csv"
+#reading the sample data sheet
+ROHR37_metadata <- read.csv(ROHR37_sam, header=TRUE, sep = ",", row.names = 2)#row.names es un argumento que indica que numero de columna contiene los rownames necesarios para armar el phyloseq. En este caso es la 2da columna de la tabla que tiene los nombres que equivalen a los nombres en la tabla de otu. Siempre deben coincidir. si no hay un match revisar su escritura
+
+##Creating a unique phyloseq object with sample-by-sequence feature table,
+#the sample metadata and the sequence taxonomies
+ROHR37_phyloseq <- phyloseq(otu_table(ROHR37_otutable_nochimera, taxa_are_rows = FALSE),
+                       sample_data(ROHR37_metadata), tax_table(ROHR37_taxtable))
+ROHR37_phyloseq
+#phyloseq-class experiment-level object
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:          [ 2121 taxa and 3 samples ]:
+ # sample_data() Sample Data:        [ 3 samples by 22 sample variables ]:
+  #tax_table()   Taxonomy Table:     [ 2121 taxa by 6 taxonomic ranks ]:
+  #taxa are columns
+
+#USE THIS TO check if THERE ARE missing samples. ###Esto no se hizo porque la metadata se hizo manualmente antes de meterla a R, ergo, sabemos que no faltan muestras
+vector1 <- ROHR37_metadata$sample_name
+vector2 <- rownames(ROHR37_otutable_nochimera)
+cASASA <- vector1[!(vector1 %in% vector2)] #Cosas que están en la tabla de OTU pero no en la metadata
+vector2[!(vector2 %in% vector1)] #Cosas que estan en la tabla de metadata perono en la OTU
+vector1==vector2
+vector1
+write.csv(ROHR37_obj@sam_data, file = "/Users/quinteroh/Desktop/pruebaRORH37.csv")
+
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 2917 taxa and 540 samples ]
+#sample_data() Sample Data:       [ 540 samples by 24 sample variables ]
+#tax_table()   Taxonomy Table:    [ 2917 taxa by 6 taxonomic ranks ]
+
+# Save Phyloseq object
+saveRDS(ROHR37_phyloseq, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/ROHR37_phyloseq.rds")
+
+
+################################################################
+# (5) Remove contaminants, control and outlier samples
+################################################################
+##Using 0.1 threshold
+ROHR37_phyloseq = readRDS("/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/ROHR37_phyloseq.rds")
+
+sample_data(ROHR37_phyloseq)$is.neg <- sample_data(ROHR37_phyloseq)$Samples == "Control"
+decontam_dataframe_prevalence <- isContaminant(ROHR37_phyloseq, method="prevalence", neg="is.neg", threshold = 0.1)
+contaminants <- table(decontam_dataframe_prevalence$contaminant)
+write.csv(decontam_dataframe_prevalence, file='/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/decontam_dataframe_prevalence.csv')
+
+
+which(decontam_dataframe_prevalence$contaminant)
+#[1]  82 119
+
+#FALSE  TRUE
+#2119    2
+###se quedo aqui 11/march/25.  22:46hh
+
+# Make phyloseq object of presence-absence in negative controls and true samples
+decontam_dataframe_prevalence_absence <- transform_sample_counts(ROHR37_phyloseq, function(abund) 1*(abund>0))
+decontam_dataframe_prevalence_absence_neg <- prune_samples(sample_data(decontam_dataframe_prevalence_absence)$Samples == "Control", decontam_dataframe_prevalence_absence)
+decontam_dataframe_prevalence_absence_pos <- prune_samples(sample_data(decontam_dataframe_prevalence_absence)$Samples == "sample", decontam_dataframe_prevalence_absence)
+# Make data.frame of prevalence in positive and negative samples
+decontam_DataFrame_PosNeg_Prevalence <- data.frame(pa.pos=taxa_sums(decontam_dataframe_prevalence_absence_pos), pa.neg=taxa_sums(decontam_dataframe_prevalence_absence_neg),
+                      contaminant=decontam_dataframe_prevalence$contaminant)
+ggplot(data=decontam_DataFrame_PosNeg_Prevalence, aes(x=pa.neg, y=pa.pos, color=contaminant)) + geom_point() +
+  xlab("Prevalence (Negative Controls).") + ylab("Prevalence (True Samples)")
+
+
+#Check what else is in the controls
+control_sequences<- subset_samples(ROHR37_phyloseq, Samples =="Control")
+control_sequences <- prune_taxa(taxa_sums(control_sequences) > 0, control_sequences)
+fasta_control_sequences = character(2 * nrow(control_sequences@tax_table))
+fasta_control_sequences[c(TRUE, FALSE)] = paste0(">", "ASV_",seq(1, nrow(control_sequences@tax_table),1))
+fasta_control_sequences[c(FALSE, TRUE)] = as.character(rownames(control_sequences@tax_table))
+writeLines(fasta_control_sequences, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/control_sequences.fasta")
+
+
+# Create a new phyloseq object without contaminants identified in contamdf.prev
+contaminantsiD <- rownames(decontam_dataframe_prevalence)[decontam_dataframe_prevalence$contaminant == TRUE]
+
+TaxaNotContaminant <- setdiff(taxa_names(ROHR37_phyloseq), contaminantsiD)
+ROHR37_phyloseq_clean <- prune_taxa(TaxaNotContaminant, ROHR37_phyloseq)
+
+# Check what are the contaminants
+fasta_contaminants_sequences = character(2 * length(contaminantsiD))
+fasta_contaminants_sequences[c(TRUE, FALSE)] = paste0(">", "Cont_",seq(1, length(contaminantsiD),1))
+fasta_contaminants_sequences[c(FALSE, TRUE)] = as.character(contaminantsiD)
+writeLines(fasta_contaminants_sequences, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/contaminant_sequences.fasta")
+
+hist(decontam_dataframe_prevalence$p, 100, ylim = c(0,200))##Ver porque no funciona y arreglar
+
+# Look at distribution of library size
+df01 <- as.data.frame(sample_data(ROHR37_phyloseq)) # Put sample_data into a ggplot-friendly data.frame
+df01$LibrarySize <- sample_sums(ROHR37_phyloseq)
+df01 <- df01[order(df01$LibrarySize),]
+df01$Index <- seq(nrow(df01))
+ggplot(data=df01, aes(x=Index, y=LibrarySize, color=Samples)) + geom_point()
+
+# Remove all control samples
+ROHR37_phyloseq_clean_nonontrol = subset_samples(ROHR37_phyloseq_clean, is.neg %in% FALSE)  
+
+# Remove samples with less than 1,000 reads
+
+ROHR37_phyloseq_clean_pruned <- prune_samples(sample_sums(ROHR37_phyloseq_clean_nonontrol) >= 1000, ROHR37_phyloseq_clean_nonontrol)
+
+#removings ASVs that are not present in any sample (if any)
+ROHR37_phyloseq_clean_pruned <- prune_taxa(taxa_sums(ROHR37_phyloseq_clean_pruned) > 0, ROHR37_phyloseq_clean_pruned)
+ROHR37_phyloseq_clean_pruned
+
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 2086 taxa and 104 samples ]
+#sample_data() Sample Data:       [ 104 samples by 23 sample variables ]
+#tax_table()   Taxonomy Table:    [ 2086 taxa by 6 taxonomic ranks ]
+
+
+library(phyloseq)
+# Save Phyloseq object
+saveRDS(ROHR37_phyloseq_clean_pruned, "/Users/quinteroh/Library/CloudStorage/OneDrive-SmithsonianInstitution/Saul_1st_lib_rohr37/ROHR37_phyloseq_clean_pruned.rds")
+
+ROHR37_phyloseq_clean_pruned = readRDS("/Users/saul/Desktop/Fastq/ROHR37_phyloseq_clean_pruned.rds")
+
+
+###Fragmentar phyloseq, solo tiburones
+Phylo_ROHR37 <-ROHR37_phyloseq_clean_pruned
+
+unique(tax_table(Phylo_ROHR37)[, "Phylum"])
+
+###hacer
+#Subdivir taxones y usar solamente tiburones
+Phylo_ROHR37_bonyfish <- subset_taxa(Phylo_ROHR37, Phylum == "Actinopteri_186623")
+#Remover secuencias que no aparezcan en ninguna muestra
+Phylo_ROHR37_bonyfish <- prune_taxa(taxa_sums(Phylo_ROHR37_bonyfish) > 0, Phylo_ROHR37_bonyfish)
+#Remover muestras que no tengan secuencias
+Phylo_ROHR37_bonyfish <- prune_samples(sample_sums(Phylo_ROHR37_bonyfish) > 0, Phylo_ROHR37_bonyfish)
+###hacer/
+print(Phylo_ROHR37_bonyfish)
+library(stringr)
+#Agregar columna con números de réplicas
+#Extraer números de replicas a un vector
+rep_namesPhylo_ROHR37 <- str_sub(row.names(Phylo_ROHR37_bonyfish@sam_data), -4, -1)
+
+print(rep_namesPhylo_ROHR37)
+#Agregar el vector como nueva columna
+sample_data(Phylo_elas)$replicateN <- rep_namesPhylo_elas
+#Añadir un identificador único para todas las replicas
+Phylo_elas@sam_data$ID_rep <- paste(Phylo_elas@sam_data$RCT, "_", Phylo_elas@sam_data$replicateN)
+#Darle estructura a los sitios para que aparezcan juntos 
+Phylo_elas@sam_data$Site <- factor(Phylo_elas@sam_data$Site, levels = c(""))
+View(Phylo_elas@sam_data)
+
+
+#Exportar Psq con las replicas por si se quiere trabajar con él
+saveRDS(Phylo_elas, "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Phylo_elas_rep.rds")
+##Antes de cualquier cosa, agrupar muestras por replica
+Phylo_perSam <- merge_samples2(Phylo_elas, "ML.CODE")
+saveRDS(Phylo_perSam, "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Phylo_perSam.rds")
+
+##Releelo para usarlo 
+Phylo_elas <- readRDS("C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Phylo_elas_rep.rds")
+View(Phylo_elas@sam_data)
+Phylo_perSam <- readRDS("C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Phylo_perSam.rds")
+View(Phylo_perSam@sam_data)
+
+###hacer
+fa4Blast = character(2 * nrow(Phylo_perSam@tax_table))
+fa4Blast[c(TRUE, FALSE)] = paste0(">", "ASV_",seq(1, nrow(Phylo_perSam@tax_table),1))
+fa4Blast[c(FALSE, TRUE)] = as.character(rownames(Phylo_perSam@tax_table))
+writeLines(fa4Blast, "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Fasta_4_blast.fasta")
+###hacer/
+
+##Job sent to Hydra for this blast run. For it to run you must remove one # from all the lines
+
+
+## /bin/sh 
+## ----------------Parameters---------------------- #
+##$  -S /bin/sh
+##$ -pe mthread 8
+##$ -q sThC.q
+##$ -l mres=16G,h_data=2G,h_vmem=2G
+##$ -cwd
+##$ -j y
+##$ -N blast_top10_rohr10II_dec04
+##$ -o blast_top10_rohr10II_dec04.log
+##$ -m bea
+##$ -M QuinteroH@si.edu
+##
+## ----------------Modules------------------------- #
+#module load bioinformatics/blast/2.15.0
+##
+## ----------------Your Commands------------------- #
+##
+#echo + `date` job $JOB_NAME started in $QUEUE with jobID=$JOB_ID on $HOSTNAME
+#echo + NSLOTS = $NSLOTS
+##
+#blastn -db MIDORI2_UNIQ_NUC_GB261_srRNA_BLAST/MIDORI2_UNIQ_NUC_GB261_srRNA_BLAST -query Fasta_4_blast.fasta -evalue 0.01 -word_size 11 -culling_limit 100 -outfmt "6 qseqid sallseqid evalue bitscore length nident pident qcovs" -out curated_OTU_BLAST_top10_12S.fasta -num_threads $NSLOTS -max_target_seqs 10
+##
+#echo = `date` job $JOB_NAME done
+
+
+# Import blast output
+out.05 <- "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/curated_OTU_BLAST_top10_12S.fasta"
+#reading the sample data sheet
+Blast.out.05 <- read.csv(out.05, header=FALSE, sep="\t", row.names = NULL)
+
+
+Blast.out.05$V2 <- gsub("root_1;", "", Blast.out.05$V2)
+Blast.out.05$V2 <- gsub(";", " / ", Blast.out.05$V2)
+Blast.out.05 <- subset (Blast.out.05, select = -V5)
+Blast.out.05 <- subset (Blast.out.05, select = -V6)
+Blast.out.05[c('#Subject accession', 'V2b')] <- str_split_fixed(Blast.out.05$V2, '###', 2)
+Blast.out.05[c('Kingdom', 'Phylum', 'Class', 'Order', 'Family', 'Genus', 'Species')] <- str_split_fixed(Blast.out.05$V2b, ' / ', 7)
+Blast.out.05 <- subset (Blast.out.05, select = -Kingdom)
+Blast.out.05 <- subset (Blast.out.05, select = -Phylum)
+Blast.out.05 <- subset (Blast.out.05, select = -Class)
+Blast.out.05 <- subset (Blast.out.05, select = -Order)
+Blast.out.05 <- subset (Blast.out.05, select = -Family)
+Blast.out.05 <- subset (Blast.out.05, select = -Genus)
+Blast.out.05$Species2 <- gsub("^.*\\_","",Blast.out.05$Species)
+Blast.out.05 <- subset (Blast.out.05, select = -V2)
+
+colnames(Blast.out.05)[colnames(Blast.out.05) == "V1"] = "#Query ID"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "V2b"] = "#Taxonomy"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "V3"] = "#evalue"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "V4"] = "#bitscore"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "V7"] = "#Identity percentage"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "V8"] = "#Coverage"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "Species"] = "#Subject"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "Species2"] = "#Subject Taxonomy ID"
+Blast.out.05$Source = "Midori GB259"
+colnames(Blast.out.05)[colnames(Blast.out.05) == "Source"] = "#Source"
+
+col_order <- c("#Query ID", "#Subject", "#Subject accession", "#Subject Taxonomy ID", "#Identity percentage", "#Coverage", "#evalue", "#bitscore", "#Source", "#Taxonomy")
+Blast.out.05 <- Blast.out.05[, col_order]
+
+# Export as tab delimited text ignoring row names
+write.table(Blast.out.05, file = "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/OTU-LCA_top5.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+#Re-read the text with the taxonomic asssingments cleaned
+
+tax_dada.01 <- "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/curated_OTU-BLAST_top10_.LCA_manuallyedited_Annotated.txt"
+tax_dada_blast.01 <- read.csv(tax_dada.01, header=TRUE, sep = "\t")
+#tax_dada_blast.01 <- tax_dada_blast.01[!duplicated(tax_dada_blast.01$X.Query), ]  ##Este paso no me convence.. mejor hacerlo manual
+                                                                                    #Se hizo manual, con arboles de geneious y asignaciones en genbank. También midiendo que era lo más probable,
+                                                                                    #Ya que si multiples especies pasan el filtro de LCA entonces da todas como opciones probables
+tax_dada_blast.01.2 <- tax_dada_blast.01[,-1]
+rownames(tax_dada_blast.01.2) <- tax_dada_blast.01[,1]
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.lca.rank"] = "lca.rank"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.lca.taxon"] = "lca.taxon"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.kingdom"] = "Kingdom"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.phylum"] = "Phylum"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.class"] = "Class"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.order"] = "Order"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.family"] = "Family"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.genus"] = "Genus"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.species"] = "Species"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.method"] = "method"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.identity"] = "identity"
+colnames(tax_dada_blast.01.2)[colnames(tax_dada_blast.01.2) == "X.coverage"] = "coverage"
+write.csv(tax_dada_blast.01.2, file="C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/curated_OTU-BLAST_top10.LCA.csv")
+
+
+#Unir al phylseq principal
+
+Phylo_perSam <- readRDS("C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Phylo_perSam.rds")
+Phylo_perSam_Ftax <- Phylo_perSam
+
+
+tax_table_Corrected <- "C:/Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/curated_OTU-BLAST_top10.LCA.csv"
+tax_table_Corrected <- read.csv(tax_table_Corrected, header = T, sep = ",", row.names = 1)
+
+fa4Blast<- readDNAStringSet("C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Fasta_4_blast.fasta")
+fastanames <- names(fa4Blast)
+fastasequences <- as.character(fa4Blast)
+sequencemap <- setNames(fastasequences, fastanames)
+tax_table_Corrected$ASVN <- rownames(tax_table_Corrected)
+rownames(tax_table_Corrected) <- sequencemap[rownames(tax_table_Corrected)]
+##Modificar taxones para quitar numero de acceso y guiones
+tax_table_Corrected$Genus <- sub(paste0("_", ".*"), "", tax_table_Corrected$Genus)
+tax_table_Corrected$Family <- sub(paste0("_", ".*"), "", tax_table_Corrected$Family)
+tax_table_Corrected$Order <- sub(paste0("_", ".*"), "", tax_table_Corrected$Order)
+tax_table_Corrected$lca.taxon <- sub("_[^_]+$", "", tax_table_Corrected$lca.taxon)
+tax_table_Corrected$lca.taxon <- sub("_", " ", tax_table_Corrected$lca.taxon)
+tax_table_Corrected$Species <- sub("_[^_]+$", "", tax_table_Corrected$Species)
+tax_table_Corrected$Species <- sub("_", " ", tax_table_Corrected$Species)
+
+tax_table_Corrected <- tax_table_Corrected %>% mutate(lca.taxon = case_when(
+  lca.taxon == "Carcharhinus galapagensis" ~ "Carcharhinus galapagensis_obscurus", lca.taxon == "Hypanus" ~ "Hypanus sp.", lca.taxon == "Pseudobatos" ~ "Pseudobatos sp.", TRUE ~ lca.taxon
+)) %>% mutate(Species = case_when(Species == "Carcharhinus galapagensis" ~ "Carcharhinus galapagensis_obscurus", lca.taxon == "Hypanus" ~ "Hypanus sp.", lca.taxon == "Pseudobatos" ~ "Pseudobatos sp.", TRUE ~ Species))
+
+tax_table_Corrected <- as.matrix(tax_table_Corrected)
+tax_table_Corrected <- tax_table(tax_table_Corrected)
+tax_table_Corrected[tax_table_Corrected[,"Genus"] == "Sphyrna", "Family"] <- "Sphyrnidae"
+
+tax_table(Phylo_perSam_Ftax ) <- tax_table_Corrected
+
+saveRDS(Phylo_perSam_Ftax, "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Phylo_perSam_Ftax.rds")
+
+###A tree because why not
+
+
+#Alineamiento 0.1
+Fallin01 <- Phylo_perSam_Ftax
+#Fallin05_table <-otu_table(Fallin05, taxa_are_rows = F)
+Fallin01_table02 <- phyloseq_to_df(Fallin01, addtax = T, addtot = F, addmaxrank = F,
+                                   sorting = "abundance")
+Fallin01_table02 <- data.frame(Fallin01_table02, row.names = 1)
+# Transpose curated_table
+#Fallin05_table02 = t(Fallin05_table02)
+
+# Extract sequences and names
+#Fallin05_asv_sequences <- getSequences(Fallin05_table02)
+Fallin01_fasta <- character(2 * nrow(Fallin01_table02))
+Fallin01_fasta[c(TRUE, FALSE)] = paste0(">", "Asv_", seq(1, nrow(Fallin01_table02)),"_",Fallin01_table02$Class,"_", Fallin01_table02$Order,"_",Fallin01_table02$Family,"_",Fallin01_table02$Genus,"_",Fallin01_table02$lca.taxon)
+Fallin01_fasta[c(FALSE, TRUE)] = rownames(Fallin01_table02)
+writeLines(Fallin01_fasta, "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Fallin01_fasta.txt")
+#names(Fallin05_asv_sequences)<- rownames(Fallin05@tax_table[Fallin05s@tax_table == Fallin05_asv_sequences])
+#rownames(Fallin05@tax_table)
+nproc <- 8 # set to number of cpus/processors to use for the clustering
+
+# Align sequences using DECIPHER
+Falling01_stringset <- readDNAStringSet("C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/Fallin01_fasta.txt")
+#alignment05 <- AlignSeqs(DNAStringSet(Fallin05_asv_sequences), anchor=NA)
+alignment01 <- AlignSeqs(Falling01_stringset, anchor= NA)
+BrowseSeqs(alignment01)
+
+#improvement of the alignments
+alignment01_end <- AdjustAlignment(alignment01)
+
+BrowseSeqs(alignment01_end)
+
+##Exportar archivos para arboles
+writeXStringSet(alignment01_end, "C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/AlignNT01.txt", format = "fasta")
+
+####Para hacer el arbol
+
+# Build maximum likelihood tree with Phangorn
+phang.align <- phyDat(as(alignment01_end, "matrix"), type="DNA") # Change sequence alignment output into a phyDat structure
+dm <- dist.ml(phang.align) # Create distance matrix
+treeNJ <- NJ(dm) # Perform Neighbor joining
+fit = pml(treeNJ, data=phang.align) # Internal maximum likelihood
+
+fitGTR <- update(fit, k=4, inv=0.2)
+fitGTR <- optim.pml(fitGTR, model="GTR", optInv=TRUE, optGamma=TRUE,
+                    rearrangement = "stochastic", control = pml.control(trace = 0))
+
+
+# Function to root the tree
+pick_new_outgroup <- function(tree.unrooted){
+  require("magrittr")
+  require("data.table")
+  require("ape") # ape::Ntip
+  # tablify parts of tree that we need.
+  treeDT <-
+    cbind(
+      data.table(tree.unrooted$edge),
+      data.table(length = tree.unrooted$edge.length)
+    )[1:Ntip(tree.unrooted)] %>%
+    cbind(data.table(id = tree.unrooted$tip.label))
+  # Take the longest terminal branch as outgroup
+  new.outgroup <- treeDT[which.max(length)]$id
+  return(new.outgroup)
+}
+
+new.outgroup = pick_new_outgroup(fitGTR$tree)
+rootedTree = ape::root(fitGTR$tree, outgroup=new.outgroup, resolve.root=TRUE)
+
+plot(rootedTree)
+#save all phangorn tree
+#write.tree(bs, file="bootstrap_example.tre")
+write.tree(rootedTree, file="C://Users/usuario/Documents/Tiburon edna/R_processing_Rohr10/Files for R/rootedtree.tre")
+
+#try this also
+# tree with ultrafast bootstrap - large pml (fitGTR)
+write.tree(fitGTR$tree, "fitgtrtree")
+
+# tree with NJ - large phylo
+write.tree(treeNJ, "treenj")
+
+# tree with large pml (fit)
+write.tree(fit$tree, "fit")
+
+
+
+##Mangalres de chiriqui
+View(Phylo_perSam_Ftax@sam_data)
+ChiriquiMangrovesPhylo <- subset_samples(Phylo_perSam_Ftax, Site %in% c("Pedregal", "Bahia_Muertos"))
+#Remover secuencias que no aparezcan en ninguna muestra
+ChiriquiMangrovesPhylo <- prune_taxa(taxa_sums(ChiriquiMangrovesPhylo) > 0, ChiriquiMangrovesPhylo)
+#Remover muestras que no tengan secuencias
+ChiriquiMangrovesPhylo <- prune_samples(sample_sums(ChiriquiMangrovesPhylo) > 0, ChiriquiMangrovesPhylo)
+View(ChiriquiMangrovesPhylo@tax_table)
