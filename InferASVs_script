@@ -8,7 +8,7 @@ head(list.files(pathinput)) #to check if the path works
 #extracting Forward (fnFs) and Reverse (fnRs) reads from files
 #take these out??? #fnFs <-file.path(pathinput, fnFs)
 ##fnRs <-file.path(pathinput, fnRs)
-fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
+forwards <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
 fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq", full.names = TRUE))
 sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
 
