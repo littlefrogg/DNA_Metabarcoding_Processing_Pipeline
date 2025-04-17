@@ -1,6 +1,17 @@
 # Main Script for eDNA sequence analysis pipeline #
 # Paige Smallman, 2025
 
+# (1) Assemble metadata
+# cutadapt
+# (2) Filter raw reads & Infer Amplicon Sequence Variants (ASVs)
+# (3) Assign taxonomy
+# (4) Create Phyloseq object
+# (5) Remove contaminants, control and outlier samples
+# (6) ASV curation
+# (7) Taxonomic assignments with BLAST
+# (8) Make a phylogenetic tree
+# (9) Create curated Phyloseq object
+
 ################################################################
 # (1) SET UP
 ################################################################
@@ -18,7 +29,7 @@ library(DECIPHER)
 library(rBLAST)
 library(tidyverse)
 library(phangorn)
-# if any above packages dont load, use install.packages()
+# if any above packages don't load, use install.packages()
 
 ## Metadata ##
 metadata <- here("inputs/metadata/metadata.csv")
@@ -28,14 +39,14 @@ metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = NULL)
 # View(metadata)
 
 ################################################################
-# (2) CUT ADAPT
+# CUT ADAPT
 ################################################################
 
 ## paste following cutadapt code in linux/terminal
 
 
 ################################################################
-# (3) INFER ASV's with DADA2
+# (2) INFER ASV's with DADA2
 ################################################################
 
 # set up variables
@@ -44,21 +55,36 @@ table_name <- "ROHR05_table"
 pathoutput <- here("outputs/ROHR05/ROHR05.rds")
 pathoutput_tracktable <- here("outputs/ROHR05/ROHR05_read_changes.txt")
 pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
+pathfigures <- here("figures/ROHR05")
 
-source(Infer_ASVs_DADA2.R) # this script if filtered inputs already exist
+#source(Infer_ASVs_DADA2.R) # this script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+
+#if filtered scripts exist:
+
+#write separate code for after filter trim
+#find subdirectory for filtered files
+filtFs <- file.path(pathinput, "filtered")
+filtRs <- file.path(pathinput, "filtered")
+#check filtered files are in subdirectory
+head(list.files(filtFs))
 
 ################################################################
-# (4) ASSIGN TAXONOMY DADA2
+# (3) ASSIGN TAXONOMY DADA2
+################################################################
+
+pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
+pathtaxonomy <- here("tax/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta")
+pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds")
+
+#source(Assign_Taxonomy.R) # this script assigns taxonomy using Dada2 Midori database to create an otu table
+
+################################################################
+# (4) CREATE PHYLOSEQ
 ################################################################
 
 
 ################################################################
-# (5) CREATE PHYLOSEQ
-################################################################
-
-
-################################################################
-# (6) MARKER SPECIFIC
+# (5) MARKER SPECIFIC
 ################################################################
 
 ## CO1 ---------------------------------------------------------------------
