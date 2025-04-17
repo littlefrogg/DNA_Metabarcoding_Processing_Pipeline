@@ -1,55 +1,74 @@
+#Step 1 script for eDNA sequence analysis pipeline #
+# Paige Smallman, 2025
 # Filter Reads, Trim Reads, Infer Amplicon Sequence Variants (ASVs)
 
-##Creating filepath to data 
+##Creating filepaths to data 
 # pathinput <- here("inputs/trimmed_ROHR05_12S")
-head(list.files(pathinput)) #to check if the path works
+head(list.files(pathinput)) #check if the path works
+#pathfigures <- here("figures/ROHR05")
 
 ##File preparation
 #extracting Forward (fnFs) and Reverse (fnRs) reads from files
-#take these out??? #fnFs <-file.path(pathinput, fnFs)
-##fnRs <-file.path(pathinput, fnRs)
-forwards <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
+fnFs <-file.path(pathinput, fnFs)
+fnRs <-file.path(pathinput, fnRs)
+fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
 fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq", full.names = TRUE))
 sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
 
-# if filtered files exist, find subdirectory for filtered files
-filtFs <- file.path(pathinput, "filtered")
-filtRs <- file.path(pathinput, "filtered")
-
-#if filtered files do not exist, plot, filter and trim: 
+##plot, filter and trim: 
+# these may take a few minutes to run, check with sys.time()
+#Sys.time()
 #plotting quality profiles
  qprofile_fwd <- print(plotQualityProfile(fnFs, aggregate = TRUE) 
-                      + ggtitle("Forward"))
+                      + ggtitle("Forward Reads Quality Plot before filter/trim"))
+#Sys.time()
  qprofile_rev <- print(plotQualityProfile(fnRs, aggregate = TRUE) 
-                     + ggtitle("Reverse"))
-# these may take a few minutes to run
-# decide where to cut off ends (around where quality score dips below 30)
-# change truncLen below accordingly
+                     + ggtitle("Reverse Reads Quality Plot before filter/trim"))
+#Sys.time()
+#save plots to figures folder
+ggsave(file.path = pathfigures, filename = "forward_quality_plot.png", plot = qprofile_fwd)
+ggsave(file.path = pathfigures, filename = "reverse_quality_plot.png", plot = qprofile_rev)
+#ggsave(filename = here("figures","forward_quality_plot.png"), plot = qprofile_fwd)
+#ggsave(filename = here("figures","reverse_quality_plot.png"), plot = qprofile_rev)
+ 
+# decide where to cut off ends (around where quality score dips below 30) and change truncLen below accordingly
 
+#placing filtered files in "filtered" subdirectory
 filtFs <- file.path(pathinput, "filtered", paste0(sample.names, "_F_filt.fastq"))
 filtRs <- file.path(pathinput, "filtered", paste0(sample.names, "_R_filt.fastq"))
 names(filtFs) <- sample.names
 names(filtRs) <- sample.names
 
-#filtering and trimming, here truncation at 220 (Fwd) and 200 (Rev) bp, 
+##filtering and trimming, here truncation at 220 (Fwd) and 200 (Rev) bp, 
 #2expected errors max (N discarded automatically)
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(220,200),
                      maxN=0, maxEE=2, truncQ=2, rm.phix=TRUE,
                      compress=TRUE, multithread=TRUE)
 
 head(out) #to check how filtering and trimming worked
-
-##continue here if skipped filter trim above
-#check filtered files are in subdirectory created above
+#check filtered files are in subdirectory
 head(list.files(filtFs))
+head(list.files(filtRs))
+
+#If not all samples had sequences after filtering, keep only the ones that do
+exists0<- file.exists(filtFs) & file.exists(filtRs) #Check which samples were written in the directory
+#Keep only the samples with reads after filtration
+filtFs <- filtFs[exists0]
+filtRs <- filtRs[exists0]
 
 #learning error rates
 errF <- learnErrors(filtFs, multithread = TRUE)
 errR <- learnErrors(filtRs, multithread = TRUE)
 #plotting errors
-#plotErrors(errF, nominalQ=TRUE)
-#plotErrors(errR, nominalQ=TRUE)
+errFplot <- print(plotErrors(errF, nominalQ=TRUE) + ggtitle("Forward Reads Errors Plot after filter/trim"))
+errRplot <- print(plotErrors(errR, nominalQ=TRUE) + ggtitle("Reverse Reads Errors Plot after filter/trim"))
 # the points should follow the black lines fairly well - ignore the red lines
+
+#save plots to figures folder
+ggsave(file.path = pathfigures, filename = "forward_errors_plot.png", plot = errFplot)
+ggsave(file.path = pathfigures, filename = "reverse_errors_plot.png", plot = errRplot)
+#ggsave(filename = here("figures","forward_errors_plot.png"), plot = errFplot)
+#ggsave(filename = here("figures","reverse_errors_plot.png"), plot = errRplot)
 
 #dereplicating reads
 sam.names <- sapply(strsplit(basename(filtFs), "_"), `[`, 1)
@@ -66,59 +85,58 @@ dadaRs[[1]]
 
 ##Merging paired ends
 mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs)
-ROHR05 <- makeSequenceTable(mergers)
-dim(ROHR05)
+ROHR05_otutable <- makeSequenceTable(mergers)
+dim(ROHR05_otutable)
 #[1]   117 8394
-table(nchar(getSequences(ROHR05)))
+table(nchar(getSequences(ROHR05_otutable)))
 
 #exporting files to use in the next part of the workflow
 #pathoutput <- here("outputs/ROHR05/ROHR05.rds")
-saveRDS(ROHR05, pathoutput)
+saveRDS(ROHR05_otutable, pathoutput)
 
-ROHR05 = readRDS(here("outputs/ROHR05/ROHR05.rds"))
-#identifying and removing chimeras
-ROHR05.nochim <- removeBimeraDenovo(ROHR05, method="pooled", multithread=TRUE)
-dim(ROHR05.nochim)
+#continue from savepoint
+#ROHR05 = readRDS(ROHR05_otutable, pathoutput)
+
+#identifying and removing chimeras; make new table without chimeras
+ROHR05_nochim <- removeBimeraDenovo(ROHR05_otutable, method="pooled", multithread=TRUE)
+dim(ROHR05_nochim)
 #[1]  117 7522 for ROHR01
 
 ##tracking changes through each step 
 getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN),
+                  sapply(mergers, getN), rowSums(ROHR05_nochimera))
 
+#if track error
 # turn reads.in and reads.out in out dataframe into two separate vectors 
-reads_in <- out[, "reads.in"]   # Extracts the first column
-reads_out <- out[, "reads.out"] # Extracts the second column
-
+#reads_in <- out[, "reads.in"]   # Extracts the first column
+#reads_out <- out[, "reads.out"] # Extracts the second column
 # to avoid cutting out data of different lengths, need to add NAs to short columns 
-max_length <- max(length(reads_in),
-                  length(reads_out),
-                  length(sapply(dadaFs, getN)), 
-                  length(sapply(dadaRs, getN)), 
-                  length(sapply(mergers, getN)), 
-                  length(rowSums(ROHR05.nochim)))
+#max_length <- max(length(reads_in),
+#                  length(reads_out),
+#                  length(sapply(dadaFs, getN)), 
+#                  length(sapply(dadaRs, getN)), 
+#                  length(sapply(mergers, getN)), 
+#                  length(rowSums(ROHR05.nochim)))
+#pad_vector <- function(vec, max_length) {
+#  length(vec) <- max_length
+#  return(vec)}
+#reads_in <- pad_vector(reads_in, max_length)
+#reads_out <- pad_vector(reads_out, max_length)
+#dadaFs_N <- pad_vector(sapply(dadaFs, getN), max_length)
+#dadaRs_N <- pad_vector(sapply(dadaRs, getN), max_length)
+#mergers_N <- pad_vector(sapply(mergers, getN), max_length)
+#nochim_N <- pad_vector(rowSums(ROHR05.nochim), max_length)
+#sam.names <- pad_vector(sam.names, max_length)
+#track <- cbind(reads_in, reads_out, dadaFs_N, dadaRs_N, mergers_N, nochim_N)
 
-pad_vector <- function(vec, max_length) {
-  length(vec) <- max_length
-  return(vec)
-}
-
-reads_in <- pad_vector(reads_in, max_length)
-reads_out <- pad_vector(reads_out, max_length)
-dadaFs_N <- pad_vector(sapply(dadaFs, getN), max_length)
-dadaRs_N <- pad_vector(sapply(dadaRs, getN), max_length)
-mergers_N <- pad_vector(sapply(mergers, getN), max_length)
-nochim_N <- pad_vector(rowSums(ROHR05.nochim), max_length)
-sam.names <- pad_vector(sam.names, max_length)
-
-track <- cbind(reads_in, reads_out, dadaFs_N, dadaRs_N, mergers_N, nochim_N)
 rownames(track) <- sam.names
-colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR",
-                     "merged", "nonchim")
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
 
 #save text file of tracking table
-pathoutput_tracktable <- here("outputs/ROHR05/ROHR05_read_changes.txt")
-write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE,
-            col.names=NA)
+#pathoutput_tracktable <- here("outputs/ROHR05/ROHR05_read_changes.txt")
+write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE, col.names=NA)
 
-# save rds of data with chimeras removed 
+#save rds of data with chimeras removed 
 pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
-saveRDS(ROHR05.nochim, pathoutput_nochim_rds)
+saveRDS(ROHR05_nochim, pathoutput_nochim_rds)
