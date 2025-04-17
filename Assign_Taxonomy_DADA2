@@ -1,0 +1,30 @@
+#Step 2 script for eDNA sequence analysis pipeline #
+# Paige Smallman, 2025
+# Assign taxonomy DADA2
+# this script assigns taxonomy using Dada2 Midori database to create an otu table
+
+#pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds")
+#pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
+#pathtaxonomy <- here("tax/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta")
+
+ROHR05_nochim = readRDS(ROHR05_nochim, pathoutput_nochim_rds)
+
+#assigning taxonomy MIDORI2 version GB264
+#reference dataset formatted for DADA2 can be found here: http://www.reference-midori.info/
+
+set.seed(119) # "random" numbers generated are reproducible
+#create taxonomy table with sequences w/ no chimeras
+ROHR05_taxtable <- assignTaxonomy(ROHR05_nochim, pathtaxonomy, multithread=TRUE)
+
+saveRDS(ROHR05_taxtable, pathoutputtax)
+
+# Inspect taxonomic assignments
+tax.print <- ROHR05_taxtable 
+rownames(tax.print) <- NULL # Removing sequence rownames for display only
+head(tax.print)
+
+DADA_tax <- tax_table(ROHR05_taxtable)
+write.csv(DADA_tax, file = here("tax/ROHR05.tax.csv"))
+
+DADA_otu <- otu_table(ROHR05.nochim, taxa_are_rows = FALSE)
+write.csv(DADA_otu, file = here("tax/ROHR05.otu.csv"))
