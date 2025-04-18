@@ -48,6 +48,7 @@ metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = NULL)
 ################################################################
 # (2) INFER ASV's with DADA2
 ################################################################
+#paige still needs to make this script interchangeable
 
 # set up variables
 pathinput <- here("inputs/trimmed_ROHR05_12S")
@@ -61,31 +62,52 @@ pathfigures <- here("figures/ROHR05")
 
 #if filtered scripts exist:
 
-#write separate code for after filter trim
+# paige needs to write separate code for after filter trim
 #find subdirectory for filtered files
-filtFs <- file.path(pathinput, "filtered")
-filtRs <- file.path(pathinput, "filtered")
+#filtFs <- file.path(pathinput, "filtered")
+#filtRs <- file.path(pathinput, "filtered")
 #check filtered files are in subdirectory
-head(list.files(filtFs))
+#head(list.files(filtFs))
 
 ################################################################
 # (3) ASSIGN TAXONOMY DADA2
 ################################################################
+#paige still needs to make this script interchangeable
 
-pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
-pathtaxonomy <- here("tax/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta")
-pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds")
+pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds") #create path to no chimera otu table
+pathtaxonomy <- here("tax/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta") #create path to updated Midori taxonomy dada2 database
+pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds") #create path to save dada taxonomy table as .rds
 
 #source(Assign_Taxonomy.R) # this script assigns taxonomy using Dada2 Midori database to create an otu table
 
 ################################################################
 # (4) CREATE PHYLOSEQ
 ################################################################
+#paige still needs to make this script interchangeable
 
+## Read RDS objects and create paths 
+pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds") #create path to dada taxonomy table
+ROHR05_taxtable = readRDS(ROHR05_taxtable, pathoutputtax) #open dada taxonomy table
+
+pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds") #create path to no chimera otu table
+ROHR05_nochimera = readRDS(ROHR05_nochim, pathoutput_nochim_rds) #open no chimera otu table
+
+metadata <- here("inputs/metadata/metadata.csv") #create path to metadata
+pathoutput <- here("outputs/ROHR05/ROHR05_phyloseq.rds") #create path to save phylosec as .rds
+
+#source(Phyloseq.R) #this script creates a phyloseq object
 
 ################################################################
 # (5) MARKER SPECIFIC
 ################################################################
+
+## 12S -------------------------------------------------------------------
+
+# Remove contaminants with Decontam
+
+# Assign taxonomy with BLAST
+
+# Curation LCA with Galaxy tool
 
 ## CO1 ---------------------------------------------------------------------
 
@@ -100,12 +122,3 @@ pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds")
 #Assign taxonomy with BLAST
 
 #Curation LCA with Galaxy tool
-
-
-## 12S -------------------------------------------------------------------
-
-# Remove contaminants with Decontam
-
-# Assign taxonomy with BLAST
-
-# Curation LCA with Galaxy tool
