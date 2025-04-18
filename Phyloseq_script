@@ -1,0 +1,38 @@
+#Step 3 script for eDNA sequence analysis pipeline #
+# Paige Smallman, 2025
+#Creating phylosec object
+
+#check dimensions of taxtable and otu table match
+dim(ROHR05_taxtable)
+# [1] 2121    6
+dim(ROHR05_nochimera)
+# [1]  123 2121
+
+#create path to metadata sheet
+#metadata <- here("inputs/metadata/metadata.csv")
+#read .csv
+ROHR05_metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = 2) #row.names is an argument that indicates the column number containing the rownames necessary for making the phyloseq. In this case the second column in the table has the same names as those in the otu table. 
+
+##Creating a unique phyloseq object with sample-by-sequence feature table, 
+#the sample metadata and the sequence taxonomies 
+ROHR05_phyloseq <- phyloseq(otu_table(ROHR05_nochimera, taxa_are_rows = FALSE), 
+                       sample_data(ROHR05_metadata), tax_table(ROHR05_taxtable)) 
+ROHR05_phyloseq
+
+#phyloseq-class experiment-level object
+#otu_table()   OTU Table:         [ 6300 taxa and 176 samples ]
+#sample_data() Sample Data:       [ 176 samples by 23 sample variables ]
+#tax_table()   Taxonomy Table:    [ 6300 taxa by 6 taxonomic ranks ]
+
+# Save Phyloseq object
+#pathoutput <- here("outputs/ROHR05/ROHR05_phyloseq.rds")
+saveRDS(ROHR05_phyloseq, pathoutput)
+
+## to check if there are missing samples 
+#vector1 <- ROHR05_metadata$sample_name
+#vector2 <- rownames(ROHR05_nochimera)
+#cASASA <- vector1[!(vector1 %in% vector2)] #Cosas que están en la tabla de OTU pero no en la metadata
+#vector2[!(vector2 %in% vector1)] #Cosas que estan en la tabla de metadata perono en la OTU
+#vector1==vector2
+#vector1
+#write.csv(ROHR05_phyloseq@sam_data, file = here("pruebaRORH05.csv"))
