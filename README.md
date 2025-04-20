@@ -3,9 +3,10 @@ Paige's eDNA processing work in progress code
 
 This pipeline is made to be run + adjusted only through the Main Script. Additional scripts are internal and called using the source function in the Main Script.
 
+use cutadapt before running this code to trim adapters
+
 **WORKFLOW:**
 
-(0). use cutadapt before running this code to trim adapters
 1. Set up R environment and user-defined variables depending on project (ROHR05_12S)
 2. Generate quality plots for sequencing reads
 3. Adjust truncation parameters based on quality plots
@@ -14,7 +15,7 @@ This pipeline is made to be run + adjusted only through the Main Script. Additio
 6. Create a phyloseq table (a tool to import, store, analyze, and graphically display complex phylogenetic sequencing data)
 7. Continue processing steps based on primers used (12S vs. COI)
 
-Directory Organization:
+**Directory Organization:**
 
 main folder:
 <img width="749" alt="Screenshot 2025-04-20 at 10 53 45 AM" src="https://github.com/user-attachments/assets/02f271ef-3522-440c-a4d1-12914ae22dd8" />
