@@ -22,8 +22,4 @@ ggsave(file.path(pathfigures, "00_quality_reverse.png"), qp_rev, width = 10, hei
   return(list(fnFs = fnFs, fnRs = fnRs))
 }
 
-# Execute quality plotting
-quality_data <- generate_quality_plots(
-  pathinput = trimmed_path,
-  pathfigures = figures_root
-)
+
