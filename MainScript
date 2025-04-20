@@ -49,7 +49,15 @@ metadata <- read.csv(metadata_path, header=TRUE, sep=",", row.names = NULL)
 ################################################################
 
 # (A) Initial Quality Assessment
-source("scripts/Quality_Assessment.R")  # This script generates quality plots for sequence reads
+source("scripts/Quality_Assessment.R")  # This script is a function to generate quality plots for sequence reads
+
+# Execute quality plotting
+quality_data <- generate_quality_plots(
+  pathinput = trimmed_path,
+  pathfigures = figures_root
+)
+
+# view quality plots
 
 # (B) User-Defined Parameters (Modify After Viewing Plots)
 
@@ -69,11 +77,42 @@ trunc_params <- list(
 # (C) Infer ASVs
 source("scripts/ASV_Processing.R")    # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
 
+processing_results <- run_dada2_processing(
+  fnFs = quality_data$fnFs,
+   fnRs = quality_data$fnRs,
+   pathinput = trimmed_path,
+   pathoutput = dada2_output,
+   pathoutput_tracktable = track_table_path,
+   pathoutput_nochim_rds = nochim_output,
+   pathfigures = figures_root,
+   trunc_params = trunc_params,
+   ncores = 8
+)
+
 # (D) Taxonomy Assignment
-source("scripts/Assign_Taxonomy.R")   # This script assigns taxonomy using Dada2 Midori database to create an otu table
+source("scripts/Assign_Taxonomy_DADA2.R")   # This script assigns taxonomy using Dada2 Midori database to create an otu table
+
+tax_results <- assign_taxonomy(
+  seqtab_nochim_rds = nochim_output,
+  tax_db_path = tax_db_path,
+  output_dir = output_root,
+  project_id = project_id,
+  ncores = 8,
+  seed = 119
+)
 
 # (E) Phyloseq Object Creation
 source("scripts/Phyloseq.R")          # This script creates a phyloseq object
+
+phy_results <- create_phyloseq(
+  otu_table_rds = nochim_output,
+  tax_table_rds = tax_table_path,
+  metadata_path = metadata_path,
+  output_dir = output_root,
+  project_id = project_id,
+  sample_id_col = 2,
+  fix_mismatches = TRUE
+)
 
 ################################################################
 # (3) MARKER SPECIFIC STEPS
