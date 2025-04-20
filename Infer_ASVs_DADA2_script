@@ -1,5 +1,5 @@
 # Step C script for eDNA sequence analysis pipeline 
-# Infer ASVs with DADA2
+# DADA2 ASV_Processing
 # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
 # called from Main Script with user-defined parameters
 
@@ -14,19 +14,19 @@ run_dada2_processing <- function(
     trunc_params,
     ncores = TRUE) {
   
-  # Load required packages (this is redundant in case you didn't just run other parts of the main script)
+# Load required packages (this is redundant in case you didn't just run other parts of the main script)
   suppressPackageStartupMessages({
     require(dada2)
     require(here)
     require(ggplot2)
   })
   
-  # Create output directories
-  dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
-  filtered_path <- file.path(pathinput, "filtered")
-  dir.create(filtered_path, showWarnings = FALSE)
+# Create output directories
+dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
+filtered_path <- file.path(pathinput, "filtered")
+dir.create(filtered_path, showWarnings = FALSE)
   
-  # PARAMETER VALIDATION
+# PARAMETER VALIDATION
   
   validate_parameters <- function(trunc_params) {
     if(length(trunc_params$truncLen) != 2) {
@@ -48,19 +48,19 @@ run_dada2_processing <- function(
     }
   )
   
-  # FILTERING AND TRIMMING
+# FILTERING AND TRIMMING
   
-  message("\nStarting processing with parameters:")
-  message(paste(capture.output(print(trunc_params)), collapse = "\n"))
+message("\nStarting processing with parameters:")
+message(paste(capture.output(print(trunc_params)), collapse = "\n"))
   
-  sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
   
-  # Set filtered file paths
-  filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
-  filtRs <- file.path(filtered_path, paste0(sample.names, "_R_filt.fastq.gz"))
-  names(filtFs) <- names(filtRs) <- sample.names
+# Set filtered file paths
+filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(filtered_path, paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- names(filtRs) <- sample.names
   
-  # Perform filtering
+# Perform filtering
   filter_stats <- filterAndTrim(
     fwd = fnFs, filt = filtFs,
     rev = fnRs, filt.rev = filtRs,
@@ -73,24 +73,24 @@ run_dada2_processing <- function(
     multithread = ncores
   )
  
-  # POST-FILTERING PROCESSING
+# POST-FILTERING PROCESSING
 
-  # Remove samples with zero reads after filtering
-  keep <- file.exists(filtFs) & file.exists(filtRs)
-  filtFs <- filtFs[keep]
-  filtRs <- filtRs[keep]
+# Remove samples with zero reads after filtering
+keep <- file.exists(filtFs) & file.exists(filtRs)
+filtFs <- filtFs[keep]
+filtRs <- filtRs[keep]
   
   if(length(filtFs) == 0) {
     stop("No samples remaining after filtering. Check input files and parameters.")
   }
   
-  # ERROR MODELING
+# ERROR MODELING
   
-  message("\nLearning error models...")
-  errF <- learnErrors(filtFs, multithread = ncores, randomize = TRUE)
-  errR <- learnErrors(filtRs, multithread = ncores, randomize = TRUE)
+message("\nLearning error models...")
+errF <- learnErrors(filtFs, multithread = ncores, randomize = TRUE)
+errR <- learnErrors(filtRs, multithread = ncores, randomize = TRUE)
   
-  # Plot error profiles
+# Plot error profiles
   plot_errors <- function(err, type) {
     err_plot <- plotErrors(err, nominalQ = TRUE) + 
       ggtitle(paste(type, "Error Profile")) +
@@ -99,20 +99,20 @@ run_dada2_processing <- function(
            plot = err_plot, width = 8, height = 6)
   }
   
-  plot_errors(errF, "Forward")
-  plot_errors(errR, "Reverse")
+plot_errors(errF, "Forward")
+plot_errors(errR, "Reverse")
   
-  # ASV INFERENCE
+# ASV INFERENCE
   
-  # Dereplicate reads
-  derepFs <- derepFastq(filtFs, verbose = TRUE)
-  derepRs <- derepFastq(filtRs, verbose = TRUE)
+# Dereplicate reads
+derepFs <- derepFastq(filtFs, verbose = TRUE)
+derepRs <- derepFastq(filtRs, verbose = TRUE)
   
-  # Sample inference
-  dadaFs <- dada(derepFs, err = errF, pool = "pseudo", multithread = ncores)
-  dadaRs <- dada(derepRs, err = errR, pool = "pseudo", multithread = ncores)
+# Sample inference
+dadaFs <- dada(derepFs, err = errF, pool = "pseudo", multithread = ncores)
+dadaRs <- dada(derepRs, err = errR, pool = "pseudo", multithread = ncores)
   
-  # Merge paired ends
+# Merge paired ends
   mergers <- mergePairs(
     dadaFs, derepFs,
     dadaRs, derepRs,
@@ -120,11 +120,11 @@ run_dada2_processing <- function(
     maxMismatch = 1
   )
   
-  # Construct sequence table
-  seqtab <- makeSequenceTable(mergers)
-  message("\nInitial ASV table dimensions: ", paste(dim(seqtab), collapse = " x "))
+# Construct sequence table
+seqtab <- makeSequenceTable(mergers)
+message("\nInitial ASV table dimensions: ", paste(dim(seqtab), collapse = " x "))
   
-  # CHIMERA REMOVAL
+# CHIMERA REMOVAL
   
   seqtab_nochim <- removeBimeraDenovo(
     seqtab,
@@ -132,16 +132,16 @@ run_dada2_processing <- function(
     multithread = ncores,
     verbose = TRUE
   )
-  message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse = " x "))
+message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse = " x "))
   
-  # OUTPUT GENERATION
+# OUTPUT GENERATION
  
-  # Save sequence tables
-  saveRDS(seqtab, pathoutput)
-  saveRDS(seqtab_nochim, pathoutput_nochim_rds)
+# Save sequence tables
+saveRDS(seqtab, pathoutput)
+saveRDS(seqtab_nochim, pathoutput_nochim_rds)
   
-  # Create tracking table
-  getN <- function(x) sum(getUniques(x))
+# Create tracking table
+getN <- function(x) sum(getUniques(x))
   track <- cbind(
     filter_stats[keep,],
     sapply(dadaFs, getN),
@@ -149,15 +149,15 @@ run_dada2_processing <- function(
     sapply(mergers, getN),
     rowSums(seqtab_nochim)
   )
-  colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
   
-  write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE, col.names = NA)
+write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE, col.names = NA)
   
-  message("\nASV processing complete!")
-  message("Output files saved to:")
-  message("- ASV Table: ", pathoutput)
-  message("- Chimera-free Table: ", pathoutput_nochim_rds)
-  message("- Read Tracking: ", pathoutput_tracktable)
+message("\nASV processing complete!")
+message("Output files saved to:")
+message("- ASV Table: ", pathoutput)
+message("- Chimera-free Table: ", pathoutput_nochim_rds)
+message("- Read Tracking: ", pathoutput_tracktable)
   
   return(list(
     seqtab = seqtab,
