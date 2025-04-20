@@ -14,6 +14,7 @@ WORKFLOW:
 7. Continue processing steps based on primers used (12S vs. COI)
 
 Directory Organization:
+
 main folder:
 <img width="749" alt="Screenshot 2025-04-20 at 10 53 45 AM" src="https://github.com/user-attachments/assets/02f271ef-3522-440c-a4d1-12914ae22dd8" />
 
