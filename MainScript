@@ -1,104 +1,82 @@
-# Main Script for eDNA sequence analysis pipeline #
+#OPTIMIZED MAIN SCRIPT for eDNA sequence analysis pipeline #
 # Paige Smallman, 2025
 
-# (1) Assemble metadata
-# cutadapt
-# (2) Filter raw reads & Infer Amplicon Sequence Variants (ASVs)
-# (3) Assign taxonomy
-# (4) Create Phyloseq object
-# (5) Remove contaminants, control and outlier samples
-# (6) ASV curation
-# (7) Taxonomic assignments with BLAST
-# (8) Make a phylogenetic tree
-# (9) Create curated Phyloseq object
+#you may need to use cutadapt before running this to trim adapters
 
 ################################################################
-# (1) SET UP
+# (1) SET UP & PARAMETERS
 ################################################################
 
-# load neccesary packages 
-library(dada2)
-library(here)
-library(ggplot2)
-library(phyloseq)
-library(decontam)
-library(metagMisc)
-library(devtools)
-library(lulu)
-library(DECIPHER)
-library(rBLAST)
-library(tidyverse)
-library(phangorn)
-# if any above packages don't load, use install.packages()
+# User-defined variables; change these for specific project
+project_id <- "ROHR05"              # Project identifier (e.g. ROHR05)
+primer <- "12S"                     # Primers used (e.g. 12S, COI, 16S)
+tax_db <- "MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta"  # Taxonomy database
 
-## Metadata ##
-metadata <- here("inputs/metadata/metadata.csv")
-#reading the sample data sheet
-metadata <- read.csv(metadata, header=TRUE, sep = ",", row.names = NULL)
-#check metadata
-# View(metadata)
+# Core directories (modify if folder structure changes)
+input_root <- here("inputs")
+output_root <- here("outputs", project_id)
+figures_root <- here("figures", project_id)
 
-################################################################
-# CUT ADAPT
-################################################################
+# Create directories if they don't exist
+dir.create(output_root, showWarnings = FALSE)
+dir.create(figures_root, showWarnings = FALSE)
 
-## paste following cutadapt code in linux/terminal
+# Load packages
+required_packages <- c("dada2", "here", "ggplot2", "phyloseq", "decontam", 
+                       "metagMisc", "devtools", "lulu", "DECIPHER", "rBLAST",
+                       "tidyverse", "phangorn")
+invisible(lapply(required_packages, require, character.only = TRUE))
 
+# Input paths
+metadata_path <- here(input_root, "metadata", "metadata.csv")
+trimmed_path <- here(input_root, "trimmed", project_id, primer)
 
-################################################################
-# (2) INFER ASV's with DADA2
-################################################################
-#paige still needs to make this script interchangeable
+# Output paths
+dada2_output <- here(output_root, paste0(project_id, "_dada2.rds"))
+track_table_path <- here(output_root, paste0(project_id, "_read_changes.txt"))
+nochim_output <- here(output_root, paste0(project_id, "_nochim.rds"))
+tax_table_path <- here(output_root, paste0(project_id, "_taxtable.rds"))
+phyloseq_path <- here(output_root, paste0(project_id, "_phyloseq.rds"))
 
-# set up variables
-pathinput <- here("inputs/trimmed_ROHR05_12S")
-table_name <- "ROHR05_table"
-pathoutput <- here("outputs/ROHR05/ROHR05.rds")
-pathoutput_tracktable <- here("outputs/ROHR05/ROHR05_read_changes.txt")
-pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds")
-pathfigures <- here("figures/ROHR05")
+# Taxonomy database path
+tax_db_path <- here("tax", tax_db)
 
-#source(Infer_ASVs_DADA2.R) # this script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
-
-#if filtered scripts exist:
-
-# paige needs to write separate code for after filter trim
-#find subdirectory for filtered files
-#filtFs <- file.path(pathinput, "filtered")
-#filtRs <- file.path(pathinput, "filtered")
-#check filtered files are in subdirectory
-#head(list.files(filtFs))
+# Load metadata
+metadata <- read.csv(metadata_path, header=TRUE, sep=",", row.names = NULL)
 
 ################################################################
-# (3) ASSIGN TAXONOMY DADA2
+# (2) PIPELINE EXECUTION
 ################################################################
-#paige still needs to make this script interchangeable
 
-pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds") #create path to no chimera otu table
-pathtaxonomy <- here("tax/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta") #create path to updated Midori taxonomy dada2 database
-pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds") #create path to save dada taxonomy table as .rds
+# (A) Initial Quality Assessment
+source("scripts/Quality_Assessment.R")  # This script generates quality plots for sequence reads
 
-#source(Assign_Taxonomy.R) # this script assigns taxonomy using Dada2 Midori database to create an otu table
+# (B) User-Defined Parameters (Modify After Viewing Plots)
+
+# TRUNCATION PARAMETER GUIDELINES
+# 1. truncLen: Set to positions where median quality > Q30
+#    - Check 00_quality_forward.png and 00_quality_reverse.png
+#    - Example: Forward drops at 220bp, Reverse at 200bp → c(220,200)
+# 2. maxEE: Maximum expected errors (typically 2-3 for each read)
+# 3. truncQ: Truncate when quality scores drop below this value (usually 2)
+
+trunc_params <- list(
+  truncLen = c(220, 200),  # Set based on quality plots
+  maxEE = c(2, 2),         # Maximum expected errors
+  truncQ = 2               # Truncate at first quality score < 2
+)
+
+# (C) Infer ASVs
+source("scripts/ASV_Processing.R")    # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+
+# (D) Taxonomy Assignment
+source("scripts/Assign_Taxonomy.R")   # This script assigns taxonomy using Dada2 Midori database to create an otu table
+
+# (E) Phyloseq Object Creation
+source("scripts/Phyloseq.R")          # This script creates a phyloseq object
 
 ################################################################
-# (4) CREATE PHYLOSEQ
-################################################################
-#paige still needs to make this script interchangeable
-
-## Read RDS objects and create paths 
-pathoutputtax <- here("outputs/ROHR05/ROHR05_taxtable.rds") #create path to dada taxonomy table
-ROHR05_taxtable = readRDS(ROHR05_taxtable, pathoutputtax) #open dada taxonomy table
-
-pathoutput_nochim_rds <- here("outputs/ROHR05/ROHR05.nochim.rds") #create path to no chimera otu table
-ROHR05_nochimera = readRDS(ROHR05_nochim, pathoutput_nochim_rds) #open no chimera otu table
-
-metadata <- here("inputs/metadata/metadata.csv") #create path to metadata
-pathoutput <- here("outputs/ROHR05/ROHR05_phyloseq.rds") #create path to save phylosec as .rds
-
-#source(Phyloseq.R) #this script creates a phyloseq object
-
-################################################################
-# (5) MARKER SPECIFIC
+# (3) MARKER SPECIFIC STEPS
 ################################################################
 
 ## 12S -------------------------------------------------------------------
