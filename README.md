@@ -18,10 +18,13 @@ main folder:
 <img width="749" alt="Screenshot 2025-04-20 at 10 53 45 AM" src="https://github.com/user-attachments/assets/02f271ef-3522-440c-a4d1-12914ae22dd8" />
 
 inputs:
+
 <img width="666" alt="Screenshot 2025-04-20 at 10 54 15 AM" src="https://github.com/user-attachments/assets/9207c30c-c148-4bc0-a811-981d60558c78" />
 
 trimmed:
+
 <img width="525" alt="Screenshot 2025-04-20 at 10 54 23 AM" src="https://github.com/user-attachments/assets/aaadb64a-198d-4a47-a01e-7d4fe028d615" />
 
 Project with multiple primers (ex. ROHR01):
+
 <img width="538" alt="Screenshot 2025-04-20 at 10 54 43 AM" src="https://github.com/user-attachments/assets/acca4af6-c866-4f7d-94f4-e13d2562e538" />
