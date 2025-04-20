@@ -3,7 +3,8 @@ Paige's eDNA processing work in progress code
 
 This pipeline is made to be run + adjusted only through the Main Script. Additional scripts are internal and called using the source function in the Main Script.
 
-WORKFLOW:
+**WORKFLOW:**
+
 (0). use cutadapt before running this code to trim adapters
 1. Set up R environment and user-defined variables depending on project (ROHR05_12S)
 2. Generate quality plots for sequencing reads
