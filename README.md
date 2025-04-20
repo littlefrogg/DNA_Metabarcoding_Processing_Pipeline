@@ -1,5 +1,5 @@
 # eDNA_WiP
-Paige's eDNA processing work in progress code
+Paige's DNA metabarcoding processing work in progress code
 
 This pipeline is made to be run + adjusted only through the Main Script. Additional scripts are internal and called using the source function in the Main Script.
 
