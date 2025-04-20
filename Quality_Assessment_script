@@ -1,0 +1,29 @@
+#Step A script for eDNA sequence analysis pipeline 
+# This script generates quality assessment plots
+# Paige Smallman, 2025
+
+generate_quality_plots <- function(pathinput, pathfigures) {
+# File handling
+fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
+fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq", full.names = TRUE))
+  
+# Create plots
+qp_fwd <- plotQualityProfile(fnFs, aggregate = TRUE) + 
+  ggtitle("Forward Reads Quality Profile")
+  
+qp_rev <- plotQualityProfile(fnRs, aggregate = TRUE) + 
+  ggtitle("Reverse Reads Quality Profile") 
+  
+# Save plots to figures folder
+dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
+ggsave(file.path(pathfigures, "00_quality_forward.png"), qp_fwd, width = 10, height = 6)
+ggsave(file.path(pathfigures, "00_quality_reverse.png"), qp_rev, width = 10, height = 6)
+  
+  return(list(fnFs = fnFs, fnRs = fnRs))
+}
+
+# Execute quality plotting
+quality_data <- generate_quality_plots(
+  pathinput = trimmed_path,
+  pathfigures = figures_root
+)
