@@ -1,4 +1,4 @@
-# Step B script for eDNA sequence analysis pipeline 
+# Step C script for eDNA sequence analysis pipeline 
 # Infer ASVs with DADA2
 # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
 # called from Main Script with user-defined parameters
