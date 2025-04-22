@@ -1,5 +1,7 @@
 # eDNA_WiP
 Paige's DNA metabarcoding processing work in progress code
+By Paige Smallman based on code written by Matthieu Leray, Helio Quintero, Luisa Meister, and Saul Fernando Rodriguez
+  (parts of this code have been written or edited using generative AI, including ChatGPT-4o and Perplexity) 
 
 This pipeline is made to be run + adjusted only through the Main Script. Additional scripts are internal and called using the source function in the Main Script.
 
