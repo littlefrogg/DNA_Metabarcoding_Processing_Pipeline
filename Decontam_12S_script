@@ -1,0 +1,144 @@
+################################################################
+#DECONTAM 12S - DNA metabarcoding processing
+################################################################
+# Paige Smallman, 2025
+
+# this script removes contaminants, control and outlier samples
+
+# decontam package provides statistical methods to identify, visualize, and remove contamination
+# this script uses the prevalence method - relies on controls + compares the prevalence of sequences in the samples vs. controls
+  # if prevalence of a sequence is higher in control = contaminant
+
+run_12S_decontamination <- function(
+    physeq_path,
+    output_dir,
+    project_id,
+    control_col = "sample_type",
+    neg_controls = c("extraction control", "field control", "pcr control"),
+    min_reads = 1000,
+    prevalence_threshold = 0.1,
+    seed = 123) {
+  
+  suppressPackageStartupMessages({
+    require(phyloseq)
+    require(decontam)
+    require(ggplot2)
+    require(tidyverse)
+  })
+  
+# Create output directory
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  
+# DATA LOADING & VALIDATION
+  
+message("\nLoading phyloseq object...")
+ps <- readRDS(physeq_path)
+  
+# Validate control column exists
+  if(!control_col %in% colnames(sample_data(ps))) {
+    stop("Control column '", control_col, "' not found in sample data")
+  }
+  
+# CONTAMINANT IDENTIFICATION
+  
+message("\nIdentifying contaminants using prevalence method...")
+  
+# Mark negative controls
+sample_data(ps)$is_neg <- sample_data(ps)[[control_col]] %in% neg_controls
+sample_data(ps)$lib_size <- sample_sums(ps)
+  
+# Detect contaminants
+  contam_df <- isContaminant(
+    ps,
+    method = "prevalence",
+    neg = "is_neg",
+    threshold = prevalence_threshold,
+    batch = NULL,
+    normalize = TRUE
+  )
+  
+# Save contaminant info
+contam_csv <- file.path(output_dir, paste0(project_id, "_contaminants.csv"))
+write.csv(contam_df, contam_csv)
+message("Saved contaminant table to: ", contam_csv)
+  
+# VISUALIZATION & DIAGNOSTICS
+  
+message("\nGenerating diagnostic plots...")
+  
+# Prevalence scatter plot
+ps_pa <- transform_sample_counts(ps, function(abund) 1*(abund>0))
+ps_neg <- prune_samples(sample_data(ps_pa)$is_neg, ps_pa)
+ps_pos <- prune_samples(!sample_data(ps_pa)$is_neg, ps_pa)
+  
+  prev_df <- data.frame(
+    pa.pos = taxa_sums(ps_pos),
+    pa.neg = taxa_sums(ps_neg),
+    contaminant = contam_df$contaminant
+  )
+  
+  prev_plot <- ggplot(prev_df, aes(x=pa.neg, y=pa.pos, color=contaminant)) +
+    geom_point(alpha=0.7) +
+    scale_color_manual(values=c("black", "red")) +
+    labs(x="Prevalence (Controls)", y="Prevalence (Samples)",
+         title="Contaminant Prevalence") +
+    theme_minimal()
+  
+# Library size distribution
+  lib_plot <- ggplot(data.frame(sample_data(ps)), aes(x=lib_size, fill=is_neg)) +
+    geom_histogram(bins=30) +
+    scale_x_log10() +
+    labs(x="Library Size (log10)", y="Count", 
+         title="Library Size Distribution") +
+    theme_minimal()
+  
+# Save plots
+ggsave(file.path(output_dir, "contaminant_prevalence.png"), prev_plot, width=8, height=6)
+ggsave(file.path(output_dir, "library_size_distribution.png"), lib_plot, width=8, height=6)
+  
+# DECONTAMINATION & FILTERING
+  
+message("\nRemoving contaminants and controls...")
+  
+# Remove contaminants
+keep_taxa <- rownames(contam_df)[!contam_df$contaminant]
+ps_clean <- prune_taxa(keep_taxa, ps)
+  
+# Remove control samples
+ps_clean <- subset_samples(ps_clean, !is_neg)
+  
+# Filter low-read samples
+ps_clean <- prune_samples(sample_sums(ps_clean) >= min_reads, ps_clean)
+ps_clean <- prune_taxa(taxa_sums(ps_clean) > 0, ps_clean)
+  
+# OUTPUT GENERATION
+  
+output_path <- file.path(output_dir, paste0(project_id, "_clean_phyloseq.rds"))
+saveRDS(ps_clean, output_path)
+message("\nSaved clean phyloseq object to: ", output_path)
+  
+# Save contaminant sequences
+  if(sum(contam_df$contaminant) > 0) {
+    contam_seqs <- rownames(contam_df)[contam_df$contaminant]
+    contam_fasta <- file.path(output_dir, paste0(project_id, "_contaminants.fasta"))
+    writeFasta(contam_seqs, contam_fasta)
+  }
+  
+  return(list(
+    phyloseq_clean = ps_clean,
+    output_path = output_path,
+    contaminants = contam_df,
+    n_contaminants = sum(contam_df$contaminant),
+    n_retained_samples = nsamples(ps_clean),
+    n_retained_taxa = ntaxa(ps_clean)
+  ))
+}
+
+# Helper function to write FASTA files
+writeFasta <- function(sequences, file) {
+  seq_lines <- vector(mode = "character", length = 2 * length(sequences))
+  seq_lines[c(TRUE, FALSE)] <- paste0(">", names(sequences))
+  seq_lines[c(FALSE, TRUE)] <- sequences
+  writeLines(seq_lines, file)
+}
+
