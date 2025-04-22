@@ -1,0 +1,59 @@
+################################################################
+# BLAST 12S - DNA metabarcoding processing
+################################################################
+# Paige Smallman, 2025
+
+#' Prepare BLAST results for LCA analysis
+prepare_blast_for_lca <- function(blast_file, output_dir, project_id) {
+  require(tidyverse)
+  
+  blast_cols <- c("qseqid", "sallseqid", "evalue", "bitscore", 
+                  "length", "nident", "pident", "qcovs")
+  
+  blast_df <- read_tsv(blast_file, col_names = blast_cols)
+  
+  # Process taxonomy strings from MIDORI
+  blast_processed <- blast_df %>%
+    separate(sallseqid, into = c("accession", "taxonomy"), sep = "###") %>%
+    mutate(
+      taxonomy = str_replace_all(taxonomy, ";", " / "),
+      taxonomy = str_remove(taxonomy, "root_1;")
+    ) %>%
+    select(-accession)
+  
+  # Format for galaxy-tool-lca
+  lca_path <- file.path(output_dir, paste0(project_id, "_LCA_input.txt"))
+  write_tsv(blast_processed, lca_path, col_names = FALSE)
+  
+  return(lca_path)
+}
+
+#' Import LCA results and create taxonomy table
+import_lca_results <- function(lca_file, output_dir, project_id) {
+  lca_cols <- c("ASV", "lca_rank", "lca_taxon", "kingdom", "phylum",
+                "class", "order", "family", "genus", "species", 
+                "method", "identity", "coverage")
+  
+  tax_df <- read_tsv(lca_file, col_names = lca_cols) %>%
+    mutate(across(kingdom:species, ~na_if(., "unknown"))) %>%
+    column_to_rownames("ASV")
+  
+  # Save formatted taxonomy table
+  tax_csv <- file.path(output_dir, paste0(project_id, "_taxonomy.csv"))
+  write.csv(tax_df, tax_csv)
+  
+  # Create phyloseq-compatible tax table
+  tax_mat <- as.matrix(tax_df[,4:10])
+  colnames(tax_mat) <- c("Kingdom", "Phylum", "Class", 
+                         "Order", "Family", "Genus", "Species")
+  
+  return(tax_mat)
+}
+
+#' Helper function to write ASV sequences
+writeFasta <- function(dna, file) {
+  seqs <- as.character(dna)
+  headers <- paste0(">", names(seqs))
+  writeLines(c(rbind(headers, seqs)), file)
+}
+
