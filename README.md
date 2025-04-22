@@ -1,13 +1,15 @@
-# eDNA_WiP
+# DNA_Metabarcoding_Processing_Pipeline
 Paige's DNA metabarcoding processing work in progress code
 By Paige Smallman based on code written by Matthieu Leray, Helio Quintero, Luisa Meister, and Saul Fernando Rodriguez
+
   (parts of this code have been written or edited using generative AI, including ChatGPT-4o and Perplexity) 
 
 This pipeline is made to be run + adjusted only through the Main Script. Additional scripts are internal and called using the source function in the Main Script.
 
-use cutadapt before running this code to trim adapters
 
 **WORKFLOW:**
+
+use cutadapt before running this code to trim adapters
 
 1. Set up R environment and user-defined variables depending on project (ROHR05_12S)
 2. Generate quality plots for sequencing reads
