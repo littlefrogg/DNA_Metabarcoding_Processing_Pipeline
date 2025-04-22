@@ -1,0 +1,88 @@
+################################################################
+# LCA Processing - DNA metabarcoding processing
+################################################################
+# Paige Smallman, 2025
+
+# Generate HPC submission script for LCA analysis
+create_lca_hpc_script <- function(lca_input, output_dir, project_id,
+                                  identity_threshold = 80, coverage_threshold = 80,
+                                  taxid_threshold = 98, taxcov_threshold = 80,
+                                  hpc_type = "slurm") {
+  
+# Validate HPC type
+  if(!hpc_type %in% c("slurm", "pbs")) {
+    stop("Unsupported HPC type. Use 'slurm' or 'pbs'")
+  }
+  
+# Set HPC parameters
+  params <- list(
+    input = basename(lca_input),
+    output = paste0(project_id, "_LCA.txt"),
+    id_thresh = identity_threshold,
+    cov_thresh = coverage_threshold,
+    taxid_thresh = taxid_threshold,
+    taxcov_thresh = taxcov_threshold
+  )
+  
+# Create script content
+  script_content <- switch(
+    hpc_type,
+    slurm = sprintf(
+      "#!/bin/bash
+#SBATCH --job-name=lca_%s
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=8G
+#SBATCH --time=2:00:00
+#SBATCH --output=%s_lca_%%j.out
+
+module load python/3.10
+
+python lca.py -i %s -o %s \\
+  -b 8 \\
+  -id %d \\
+  -cov %d \\
+  -t best_hits_range \\
+  -tid %d \\
+  -tcov %d \\
+  -flh unknown
+",
+      project_id, project_id,
+      params$input, params$output,
+      params$id_thresh, params$cov_thresh,
+      params$taxid_thresh, params$taxcov_thresh
+    )
+  )
+  
+# Write script file
+script_path <- here(output_dir, paste0("run_lca_", project_id, ".sh"))
+writeLines(script_content, script_path)
+  
+return(script_path)
+}
+
+# Validate taxonomy table structure
+validate_taxonomy <- function(tax_table, physeq) {
+  valid <- TRUE
+  
+# Check dimensions
+  if(ntaxa(physeq) != nrow(tax_table)) {
+    warning("Taxa count mismatch between phyloseq and taxonomy table")
+    valid <- FALSE
+  }
+  
+# Check required columns
+  required_cols <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+  if(!all(required_cols %in% colnames(tax_table))) {
+    warning("Missing required taxonomy columns")
+    valid <- FALSE
+  }
+  
+# Check NA percentage
+  na_percent <- mean(is.na(tax_table[, "Species"]))
+  if(na_percent > 0.7) {
+    warning("High percentage (", round(na_percent*100, 1), "%) of NA in Species-level assignments")
+  }
+  
+  return(valid)
+}
