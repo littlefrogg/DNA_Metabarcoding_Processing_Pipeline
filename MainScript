@@ -118,19 +118,52 @@ phy_results <- create_phyloseq(
 # (3) MARKER SPECIFIC STEPS
 ################################################################
 
-## 12S -------------------------------------------------------------------
+## 12S #########################################################
 
-# Remove contaminants with Decontam
+## Remove contaminants with Decontam
 
-# Assign taxonomy with BLAST
+source("scripts/Decontam_12S.R")
 
-# Curation LCA with Galaxy tool
+decon_results <- run_12S_decontamination(
+  physeq_path = phyloseq_path,
+  output_dir = file.path(output_root, "decontam"),
+  project_id = project_id,
+  control_col = "sample_type",
+  neg_controls = c("extraction control", "field control", "pcr control"),
+  min_reads = 1000,
+  prevalence_threshold = 0.1
+)
 
-## CO1 ---------------------------------------------------------------------
+# Access clean phyloseq object
+ps_clean <- decon_results$phyloseq_clean
 
-# Remove contaminants with Decontam
+## Assign taxonomy with BLAST
+
+
+## Curation LCA with Galaxy tool
+
+
+## CO1 #########################################################
+
+## Remove contaminants with Decontam
+# COI requires additional steps to address nuclear mitochondrial pseudogenes
+
+source("scripts/Decontam_COI.R")
+
+coi_decon <- run_COI_decontamination(
+  physeq_path = phyloseq_path,
+  output_dir = file.path(output_root, "coi_decontam"),
+  project_id = project_id,
+  control_col = "sample_type",
+  neg_controls = c("extraction control", "field control", "pcr control"),
+  min_reads = 2000,  # Higher threshold for COI
+  prevalence_threshold = 0.05,
+  max_n_ratio = 0.001,  # Stricter for COI
+  frame_shift_check = TRUE
+)
 
 # Cluster ASVs with Decipher
+
 
 # Create match list with Vsearch
 
