@@ -9,6 +9,13 @@
 # (1) SET UP & PARAMETERS
 ################################################################
 
+# Load packages
+required_packages <- c("dada2", "here", "ggplot2", "phyloseq", "decontam", 
+                       "metagMisc", "devtools", "lulu", "DECIPHER", "rBLAST",
+                       "tidyverse", "phangorn")
+
+invisible(lapply(required_packages, require, character.only = TRUE))
+
 # User-defined variables; change these for specific project
 project_id <- "ROHR05"              # Project identifier (e.g. ROHR05)
 primer <- "12S"                     # Primers used (e.g. 12S, COI, 16S)
@@ -22,12 +29,6 @@ figures_root <- here("figures", project_id)
 # Create directories if they don't exist
 dir.create(output_root, showWarnings = FALSE)
 dir.create(figures_root, showWarnings = FALSE)
-
-# Load packages
-required_packages <- c("dada2", "here", "ggplot2", "phyloseq", "decontam", 
-                       "metagMisc", "devtools", "lulu", "DECIPHER", "rBLAST",
-                       "tidyverse", "phangorn")
-invisible(lapply(required_packages, require, character.only = TRUE))
 
 # Input paths
 metadata_path <- here(input_root, "metadata", "metadata.csv")
@@ -58,8 +59,8 @@ quality_data <- generate_quality_plots(
   pathinput = trimmed_path,
   pathfigures = figures_root
 )
-
-# view quality plots
+# load and view quality plots
+quality_data
 
 # (B) User-Defined Parameters (Modify After Viewing Plots)
 
@@ -77,7 +78,7 @@ trunc_params <- list(
 )
 
 # (C) Infer ASVs
-source("scripts/ASV_Processing.R")    # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+source("scripts/Infer_ASVs_DADA2.R")    # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
 
 processing_results <- run_dada2_processing(
   fnFs = quality_data$fnFs,
@@ -236,10 +237,11 @@ if(validate_taxonomy(tax_table, ps_clean)) {
 # Yay! data is stored as final phyloseq rds!
 # You can now continue to use for analysis!
 
+
 ## CO1 #########################################################
 
-## Remove contaminants with Decontam
-# COI requires additional steps to address nuclear mitochondrial pseudogenes
+## Remove contaminants with Decontam ####
+  # COI requires additional steps to address nuclear mitochondrial pseudogenes
 
 source("scripts/Decontam_COI.R")
 
@@ -255,13 +257,27 @@ coi_decon <- run_COI_decontamination(
   frame_shift_check = TRUE
 )
 
-# Cluster ASVs with Decipher
+ps_clean <- coi_decon$phyloseq_clean
+
+## Cluster ASVs with Decipher ####
+
+source("scripts/Cluster_ASVs_COI.R") # this script clusters similar ASVs into OTUs with 97% similarity
+
+# Run clustering
+ps_otu <- cluster_coi_asvs(
+  ps_object = ps_clean,
+  output_dir = here("results/COI_clustering"),
+  project_id = "ROHR05",
+  cutoff = 0.03,       # 97% similarity threshold
+  min_coverage = 0.8,  # Minimum sequence overlap
+)
+
+## Create match list with Vsearch ####
 
 
-# Create match list with Vsearch
 
-# Curate OTUs with lulu
+## Curate OTUs with lulu ####
 
-## Assign taxonomy with BLAST
+## Assign taxonomy with BLAST ####
 
-#Curation LCA with Galaxy tool
+## Curation LCA with Galaxy tool ####
