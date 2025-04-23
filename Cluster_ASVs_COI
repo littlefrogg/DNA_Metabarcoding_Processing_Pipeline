@@ -1,0 +1,82 @@
+################################################################
+# CLUSTER ASVs COI - DNA metabarcoding processing
+################################################################
+
+# Cluster COI ASVs using DECIPHER
+cluster_coi_asvs <- function(ps_object, 
+                             output_dir = output_root,
+                             project_id = project_id,
+                             cutoff = 0.03,         # 97% similarity
+                             min_coverage = 0.8,
+                             processors = NULL) {
+  
+# Load required packages
+  suppressPackageStartupMessages({
+    require(phyloseq)
+    require(DECIPHER)
+    require(Biostrings)
+    require(tidyverse)
+  })
+  
+# Create output directory
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  
+# Extract sequences from phyloseq
+dna <- refseq(ps_object)
+  if(is.null(dna)) stop("Phyloseq object missing reference sequences")
+  
+# Cluster ASVs
+message("\n[", Sys.time(), "] Starting ASV clustering...")
+  clusters <- Clusterize(
+    dna,
+    cutoff = cutoff,
+    minCoverage = min_coverage,
+    processors = processors,
+    verbose = TRUE
+  )
+  
+# Process cluster assignments
+  cluster_df <- tibble(
+    ASV = names(dna),
+    OTU = paste0("OTU_", clusters$cluster)
+  )
+  
+# Save cluster assignments
+cluster_file <- file.path(output_dir, paste0(project_id, "_clusters.csv"))
+write_csv(cluster_df, cluster_file)
+message("Saved cluster assignments to: ", cluster_file)
+  
+# Create OTU table
+message("\nCreating OTU table...")
+otu_mat <- otu_table(ps_object) %>%
+    t() %>%
+    rowsum(cluster_df$OTU) %>%
+    t()
+  
+# Create consensus taxonomy
+message("Generating consensus taxonomy...")
+  tax_df <- tax_table(ps_object) %>%
+    as.data.frame() %>%
+    rownames_to_column("ASV") %>%
+    left_join(cluster_df, by = "ASV") %>%
+    group_by(OTU) %>%
+    summarize(across(everything(), ~paste(unique(na.omit(.)), collapse = "|"))) %>%
+    column_to_rownames("OTU") %>%
+    as.matrix()
+  
+# Build new phyloseq object
+message("Constructing phyloseq object...")
+  ps_otu <- phyloseq(
+    otu_table(otu_mat, taxa_are_rows = FALSE),
+    tax_table(tax_df),
+    sample_data(ps_object)
+  )
+  
+# Save results
+output_file <- file.path(output_dir, paste0(project_id, "_clustered_phyloseq.rds"))
+saveRDS(ps_otu, output_file)
+message("\nSuccessfully saved clustered phyloseq to: ", output_file)
+  
+return(ps_otu)
+}
+
