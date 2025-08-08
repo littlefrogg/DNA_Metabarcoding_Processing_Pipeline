@@ -69,6 +69,7 @@ trimmed_path <- here(input_root, "trimmed", project_id, primer)
 dada2_output <- here(output_root, paste0(project_id, "_dada2.rds"))
 track_table_path <- here(output_root, paste0(project_id, "_read_changes.txt"))
 nochim_output <- here(output_root, paste0(project_id, "_nochim.rds"))
+nochim_csv <- here(output_root, paste0(project_id, "_nochim.csv"))
 tax_table_path <- here(output_root, paste0(project_id, "_taxtable.rds"))
 phyloseq_path <- here(output_root, paste0(project_id, "_phyloseq.rds"))
 
@@ -109,6 +110,10 @@ trunc_params <- list(
 )
 
 # (C) This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+
+# for COI, remove non-specific amplification and filter by length 310–316 bp
+COI_seqtab <- TRUE   # Set to TRUE if using COI primers, FALSE for 12S or others
+
 source("scripts/Infer_ASVs_DADA2.R")    
 
 # run DADA2 processing with ncores parellel processing 
@@ -119,6 +124,7 @@ processing_results <- run_dada2_processing(
    pathoutput = dada2_output,
    pathoutput_tracktable = track_table_path,
    pathoutput_nochim_rds = nochim_output,
+   pathoutput_nochim_csv = nochim_csv,
    pathfigures = figures_root,
    trunc_params = trunc_params,
    ncores = 8

@@ -52,9 +52,7 @@ dir.create(filtered_path, showWarnings = FALSE)
   
 message("\nStarting processing with parameters:")
 message(paste(capture.output(print(trunc_params)), collapse = "\n"))
-  
-sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
-  
+    
 # Set filtered file paths
 filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
 filtRs <- file.path(filtered_path, paste0(sample.names, "_R_filt.fastq.gz"))
@@ -79,7 +77,7 @@ names(filtFs) <- names(filtRs) <- sample.names
 keep <- file.exists(filtFs) & file.exists(filtRs)
 filtFs <- filtFs[keep]
 filtRs <- filtRs[keep]
-  
+
   if(length(filtFs) == 0) {
     stop("No samples remaining after filtering. Check input files and parameters.")
   }
@@ -87,49 +85,49 @@ filtRs <- filtRs[keep]
 # ERROR MODELING
   
 message("\nLearning error models...")
+# Learn error rates with multithreading and randomization
 errF <- learnErrors(filtFs, multithread = ncores, randomize = TRUE)
 errR <- learnErrors(filtRs, multithread = ncores, randomize = TRUE)
+
+# Plot error profiles (nominalQ = TRUE is standard, FALSE for troubleshooting)
+plotErrors(errF, nominalQ = TRUE)
+plotErrors(errR, nominalQ = TRUE)
   
-# Plot error profiles
-  plot_errors <- function(err, type) {
-    err_plot <- plotErrors(err, nominalQ = TRUE) + 
-      ggtitle(paste(type, "Error Profile")) +
-      theme_minimal()
-    ggsave(file.path(pathfigures, paste0(type, "_errors.png")), 
-           plot = err_plot, width = 8, height = 6)
-  }
-  
-plot_errors(errF, "Forward")
-plot_errors(errR, "Reverse")
-  
-# ASV INFERENCE
-  
-# Dereplicate reads
+# Dereplicate reads and assign names
+sam.names <- tools::file_path_sans_ext(basename(filtFs))
 derepFs <- derepFastq(filtFs, verbose = TRUE)
+names(derepFs) <- sam.names
 derepRs <- derepFastq(filtRs, verbose = TRUE)
+names(derepRs) <- sam.names
   
 # Sample inference
-dadaFs <- dada(derepFs, err = errF, pool = "pseudo", multithread = ncores)
-dadaRs <- dada(derepRs, err = errR, pool = "pseudo", multithread = ncores)
+dadaFs <- dada(derepFs, err = errF, multithread = TRUE)
+dadaRs <- dada(derepRs, err = errR, multithread = TRUE)
   
 # Merge paired ends
   mergers <- mergePairs(
     dadaFs, derepFs,
     dadaRs, derepRs,
-    minOverlap = 20,
-    maxMismatch = 1
+    verbose = TRUE
   )
   
 # Construct sequence table
 seqtab <- makeSequenceTable(mergers)
 message("\nInitial ASV table dimensions: ", paste(dim(seqtab), collapse = " x "))
   
+  if (COI_seqtab) {
+  message("Filtering ASVs to keep only those with length 310–316 bp")
+  seqtab <- seqtab[, nchar(colnames(seqtab)) %in% 310:316]
+} else {
+  message("Keeping all ASVs regardless of length")
+}
+
 # CHIMERA REMOVAL
-  
+
   seqtab_nochim <- removeBimeraDenovo(
     seqtab,
-    method = "pooled",
-    multithread = ncores,
+    method = "consensus",
+    multithread = 10,
     verbose = TRUE
   )
 message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse = " x "))
@@ -139,6 +137,7 @@ message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse 
 # Save sequence tables
 saveRDS(seqtab, pathoutput)
 saveRDS(seqtab_nochim, pathoutput_nochim_rds)
+write.csv(seqtab.nochim, pathoutput_nochim_csv)
   
 # Create tracking table
 getN <- function(x) sum(getUniques(x))
@@ -178,6 +177,7 @@ message("- Read Tracking: ", pathoutput_tracktable)
 #   pathoutput = dada2_output,
 #   pathoutput_tracktable = track_table_path,
 #   pathoutput_nochim_rds = nochim_output,
+#   pathoutput_nochim_csv = nochim_csv,
 #   pathfigures = figures_root,
 #   trunc_params = trunc_params,
 #   ncores = 8
