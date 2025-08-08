@@ -1,7 +1,6 @@
 # DNA_Metabarcoding_Processing_Pipeline
 Paige's DNA metabarcoding processing work in progress code
 
-testing
 
 By Paige Smallman based on code written by Matthieu Leray, Helio Quintero, Luisa Meister, and Saul Fernando Rodriguez
 

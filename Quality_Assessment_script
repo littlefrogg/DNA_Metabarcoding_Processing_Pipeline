@@ -3,23 +3,34 @@
 # Paige Smallman, 2025
 
 generate_quality_plots <- function(pathinput, pathfigures) {
-# File handling
-fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
-fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq", full.names = TRUE))
-  
-# Create plots
-qp_fwd <- plotQualityProfile(fnFs, aggregate = TRUE) + 
-  ggtitle("Forward Reads Quality Profile")
-  
-qp_rev <- plotQualityProfile(fnRs, aggregate = TRUE) + 
-  ggtitle("Reverse Reads Quality Profile") 
-  
-# Save plots to figures folder
-dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
-ggsave(file.path(pathfigures, "00_quality_forward.png"), qp_fwd, width = 10, height = 6)
-ggsave(file.path(pathfigures, "00_quality_reverse.png"), qp_rev, width = 10, height = 6)
-  
-  return(list(fnFs = fnFs, fnRs = fnRs))
+  # List forward and reverse files
+  fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
+  fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq", full.names = TRUE))
+
+  # Remove files with very small size (likely empty)
+  fnFs <- fnFs[file.size(fnFs) > 50]
+  fnRs <- fnRs[file.size(fnRs) > 50]
+
+  # Keep only pairs where both forward and reverse exist
+  sample.names.F <- tools::file_path_sans_ext(basename(fnFs))
+  sample.names.R <- tools::file_path_sans_ext(basename(fnRs))
+  common.samples <- intersect(sample.names.F, sample.names.R)
+  fnFs <- fnFs[sample.names.F %in% common.samples]
+  fnRs <- fnRs[sample.names.R %in% common.samples]
+  sample.names <- common.samples
+
+  # Create plots
+  qp_fwd <- plotQualityProfile(fnFs, aggregate = TRUE) + 
+    ggtitle("Forward Reads Quality Profile")
+  qp_rev <- plotQualityProfile(fnRs, aggregate = TRUE) + 
+    ggtitle("Reverse Reads Quality Profile") 
+
+  # Save plots
+  dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
+  ggsave(file.path(pathfigures, "00_quality_forward.png"), qp_fwd, width = 10, height = 6)
+  ggsave(file.path(pathfigures, "00_quality_reverse.png"), qp_rev, width = 10, height = 6)
+
+  return(list(fnFs = fnFs, fnRs = fnRs, sample.names = sample.names))
 }
 
 
