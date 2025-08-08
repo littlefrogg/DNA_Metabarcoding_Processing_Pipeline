@@ -3,20 +3,51 @@
 ################################################################
 # Paige Smallman, 2025
 
-#you may need to use cutadapt before running this to trim adapters
+# you may need to use cutadapt before running this to trim adapters
+# MAKE SURE TO ADJUST VARIABLES AND PATHS BELOW
 
 ################################################################
 # (1) SET UP & PARAMETERS
 ################################################################
 
-# Load packages
-required_packages <- c("dada2", "here", "ggplot2", "phyloseq", "decontam", 
-                       "metagMisc", "devtools", "lulu", "DECIPHER", "rBLAST",
-                       "tidyverse", "phangorn")
+# Load necessary libraries
+# ---- Robust package installer/loader ----
 
-invisible(lapply(required_packages, require, character.only = TRUE))
+cran_packages <- c(
+  "here", "ggplot2", "tibble", "dplyr", "usethis", "Rcpp", "devtools", "remotes", "ape", "phangorn", "rBLAST", "tidyverse"
+)
+bioc_packages <- c(
+  "dada2", "phyloseq", "speedyseq", "decontam", "metagMisc", "DECIPHER", "lulu",
+  "Biostrings", "BiocGenerics", "XVector", "GenomeInfoDb", "ShortRead", "RcppParallel"
+)
+github_packages <- list(
+  metagMisc = "vmikk/metagMisc",
+  lulu = "tobiasgf/lulu",
+  speedyseq = "mikemc/speedyseq"
+)
 
-# User-defined variables; change these for specific project
+# Install CRAN packages
+to_install_cran <- setdiff(cran_packages, rownames(installed.packages()))
+if(length(to_install_cran)) install.packages(to_install_cran)
+
+# Install Bioconductor packages
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+to_install_bioc <- setdiff(bioc_packages, rownames(installed.packages()))
+if(length(to_install_bioc)) BiocManager::install(to_install_bioc, ask = FALSE, update = FALSE)
+
+# Install GitHub packages if not present
+if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
+for(pkg in names(github_packages)) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    remotes::install_github(github_packages[[pkg]])
+  }
+}
+
+# Load all packages
+all_packages <- unique(c(cran_packages, bioc_packages, names(github_packages)))
+invisible(lapply(all_packages, function(pkg) library(pkg, character.only = TRUE)))
+
+# USER-DEFINED VARIABLES; change these for specific project
 project_id <- "ROHR05"              # Project identifier (e.g. ROHR05)
 primer <- "12S"                     # Primers used (e.g. 12S, COI, 16S)
 tax_db <- "MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta"  # Taxonomy database
@@ -77,9 +108,10 @@ trunc_params <- list(
   truncQ = 2               # Truncate at first quality score < 2
 )
 
-# (C) Infer ASVs
-source("scripts/Infer_ASVs_DADA2.R")    # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+# (C) This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+source("scripts/Infer_ASVs_DADA2.R")    
 
+# run DADA2 processing with ncores parellel processing 
 processing_results <- run_dada2_processing(
   fnFs = quality_data$fnFs,
    fnRs = quality_data$fnRs,
