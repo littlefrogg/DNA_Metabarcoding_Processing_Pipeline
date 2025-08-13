@@ -11,8 +11,6 @@
 ################################################################
 
 # Load necessary libraries
-# ---- Robust package installer/loader ----
-
 cran_packages <- c(
   "here", "ggplot2", "tibble", "dplyr", "usethis", "Rcpp", "devtools", "remotes", "ape", "phangorn", "rBLAST", "tidyverse"
 )
@@ -56,35 +54,34 @@ tax_db <- "MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta"  # Taxonomy database
 input_root <- here("inputs")
 output_root <- here("outputs", project_id)
 figures_root <- here("figures", project_id)
+tax_root <- here("tax", tax_db)
+scripts_root <- here("scripts")
 
 # Create directories if they don't exist
 dir.create(output_root, showWarnings = FALSE)
 dir.create(figures_root, showWarnings = FALSE)
 
 # Input paths
-metadata_path <- here(input_root, "metadata", "metadata.csv")
-trimmed_path <- here(input_root, "trimmed", project_id, primer)
-
-# Output paths
-dada2_output <- here(output_root, paste0(project_id, "_dada2.rds"))
-track_table_path <- here(output_root, paste0(project_id, "_read_changes.txt"))
-nochim_output <- here(output_root, paste0(project_id, "_nochim.rds"))
-nochim_csv <- here(output_root, paste0(project_id, "_nochim.csv"))
-tax_table_path <- here(output_root, paste0(project_id, "_taxtable.rds"))
-phyloseq_path <- here(output_root, paste0(project_id, "_phyloseq.rds"))
-
-# Taxonomy database path
-tax_db_path <- here("tax", tax_db)
+metadata_path <- file.path(input_root, "metadata", "metadata.csv")
+trimmed_path <- file.path(input_root, "trimmed", project_id, primer)
 
 # Load metadata
 metadata <- read.csv(metadata_path, header=TRUE, sep=",", row.names = NULL)
+
+# Output paths
+dada2_output <- file.path(output_root, paste0(project_id, "_dada2.rds"))
+track_table_path <- file.path(output_root, paste0(project_id, "_read_changes.txt"))
+nochim_output <- file.path(output_root, paste0(project_id, "_nochim.rds"))
+nochim_csv <- file.path(output_root, paste0(project_id, "_nochim.csv"))
+tax_table_path <- file.path(output_root, paste0(project_id, "_taxtable.rds"))
+phyloseq_path <- file.path(output_root, paste0(project_id, "_phyloseq.rds"))
 
 ################################################################
 # (2) PIPELINE EXECUTION
 ################################################################
 
 # (A) Initial Quality Assessment
-source("scripts/Quality_Assessment.R")  # This script is a function to generate quality plots for sequence reads
+source(file.path(scripts_root, "Quality_Assessment.R"))  # This script is a function to generate quality plots for sequence reads
 
 # Execute quality plotting
 quality_data <- generate_quality_plots(
@@ -114,7 +111,10 @@ trunc_params <- list(
 # for COI, remove non-specific amplification and filter by length 310–316 bp
 COI_seqtab <- TRUE   # Set to TRUE if using COI primers, FALSE for 12S or others
 
-source("scripts/Infer_ASVs_DADA2.R")    
+# NovaSeq bins quality scores; we need to adapt the error model to account for this using the dada2 package makeBinnedQualErrfun(binnedQ)
+NOVA <- TRUE # Set to TRUE if using NovaSeq data
+
+source(file.path(scripts_root, "Infer_ASVs_DADA2.R"))    
 
 # run DADA2 processing with ncores parellel processing 
 processing_results <- run_dada2_processing(
@@ -131,11 +131,11 @@ processing_results <- run_dada2_processing(
 )
 
 # (D) Taxonomy Assignment
-source("scripts/Assign_Taxonomy_DADA2.R")   # This script assigns taxonomy using Dada2 Midori database to create an otu table
+source(file.path(scripts_root, "Assign_Taxonomy_DADA2.R"))   # This script assigns taxonomy using Dada2 Midori database to create an otu table
 
 tax_results <- assign_taxonomy(
   seqtab_nochim_rds = nochim_output,
-  tax_db_path = tax_db_path,
+  tax_db_path = tax_root,
   output_dir = output_root,
   project_id = project_id,
   ncores = 8,
@@ -143,7 +143,7 @@ tax_results <- assign_taxonomy(
 )
 
 # (E) Phyloseq Object Creation
-source("scripts/Phyloseq.R")          # This script creates a phyloseq object
+source(file.path(scripts_root, "Phyloseq.R"))          # This script creates a phyloseq object
 
 phy_results <- create_phyloseq(
   otu_table_rds = nochim_output,
@@ -163,7 +163,7 @@ phy_results <- create_phyloseq(
 
 ## Remove contaminants with Decontam ####
 
-source("scripts/Decontam_12S.R")
+source(file.path(scripts_root, "Decontam_12S.R"))
 
 decon_results <- run_12S_decontamination(
   physeq_path = phyloseq_path,
@@ -220,12 +220,12 @@ blastn -db MIDORI2_UNIQ_NUC_GB254_srRNA_BLAST \
 
 # === R PROCESSING STEPS ===
 # 4. After receiving BLAST results, process in R:
-source("scripts/BLAST_12S.R")
+source(file.path(scripts_root, "BLAST_12S.R"))
 
 ## Curation LCA with Galaxy tool ####
 
 # === LOCAL R PROCESSING ===
-source("scripts/LCA_Processing.R")
+source(file.path(scripts_root, "LCA_Processing.R"))
 
 # 1. Prepare BLAST results for LCA
 blast_path <- here("blast_results", paste0(project_id, "_BLAST_top3.out"))
@@ -281,7 +281,7 @@ if(validate_taxonomy(tax_table, ps_clean)) {
 ## Remove contaminants with Decontam ####
   # COI requires additional steps to address nuclear mitochondrial pseudogenes
 
-source("scripts/Decontam_COI.R")
+source(file.path(scripts_root, "Decontam_COI.R"))
 
 coi_decon <- run_COI_decontamination(
   physeq_path = phyloseq_path,
@@ -299,7 +299,7 @@ ps_clean <- coi_decon$phyloseq_clean
 
 ## Cluster ASVs with Decipher ####
 
-source("scripts/Cluster_ASVs_COI.R") # this script clusters similar ASVs into OTUs with 97% similarity
+source(file.path(scripts_root, "Cluster_ASVs_COI.R")) # this script clusters similar ASVs into OTUs with 97% similarity
 
 # Run clustering
 ps_otu <- cluster_coi_asvs(

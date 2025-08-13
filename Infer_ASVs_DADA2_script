@@ -6,10 +6,12 @@
 run_dada2_processing <- function(
     fnFs, 
     fnRs,
+    sample.names,
     pathinput,
     pathoutput,
     pathoutput_tracktable,
     pathoutput_nochim_rds,
+    pathoutput_nochim_csv,
     pathfigures,
     trunc_params,
     ncores = TRUE) {
@@ -52,7 +54,7 @@ dir.create(filtered_path, showWarnings = FALSE)
   
 message("\nStarting processing with parameters:")
 message(paste(capture.output(print(trunc_params)), collapse = "\n"))
-    
+
 # Set filtered file paths
 filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
 filtRs <- file.path(filtered_path, paste0(sample.names, "_R_filt.fastq.gz"))
@@ -84,10 +86,18 @@ filtRs <- filtRs[keep]
   
 # ERROR MODELING
   
-message("\nLearning error models...")
-# Learn error rates with multithreading and randomization
-errF <- learnErrors(filtFs, multithread = ncores, randomize = TRUE)
-errR <- learnErrors(filtRs, multithread = ncores, randomize = TRUE)
+  # learning errror rates either for NovaSeq or Illumina data
+  if (NOVA) {
+    message("running error model for NovaSeq data")
+    binnedQs <- c(2, 11, 25, 37)
+    binnedQualErrfun <- makeBinnedQualErrfun(binnedQs)
+    errF <- learnErrors(filtFs, errorEstimationFunction = binnedQualErrfun, multi = TRUE)
+    errR <- learnErrors(filtRs, errorEstimationFunction = binnedQualErrfun, multi = TRUE)
+  } else {
+    message("running error model for Illumina data")
+    errF <- learnErrors(filtFs, multithread = ncores, randomize = TRUE)
+    errR <- learnErrors(filtRs, multithread = ncores, randomize = TRUE)
+  }
 
 # Plot error profiles (nominalQ = TRUE is standard, FALSE for troubleshooting)
 plotErrors(errF, nominalQ = TRUE)
@@ -138,7 +148,13 @@ message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse 
 saveRDS(seqtab, pathoutput)
 saveRDS(seqtab_nochim, pathoutput_nochim_rds)
 write.csv(seqtab.nochim, pathoutput_nochim_csv)
-  
+
+message("nrow(filter_stats[keep,]): ", nrow(filter_stats[keep,]))
+message("length(dadaFs): ", length(dadaFs))
+message("length(dadaRs): ", length(dadaRs))
+message("length(mergers): ", length(mergers))
+message("length(rowSums(seqtab_nochim)): ", length(rowSums(seqtab_nochim))) 
+
 # Create tracking table
 getN <- function(x) sum(getUniques(x))
   track <- cbind(
