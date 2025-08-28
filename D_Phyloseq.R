@@ -1,4 +1,4 @@
-#Step E script for eDNA sequence analysis pipeline #
+#Step D script for eDNA sequence analysis pipeline #
 # Paige Smallman, 2025
 #Creating phylosec object
 

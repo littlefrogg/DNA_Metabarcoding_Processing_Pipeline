@@ -12,11 +12,11 @@
 
 # Load necessary libraries
 cran_packages <- c(
-  "here", "ggplot2", "tibble", "dplyr", "usethis", "Rcpp", "devtools", "remotes", "ape", "phangorn", "rBLAST", "tidyverse"
+  "here", "ggplot2", "tibble", "dplyr", "usethis", "Rcpp", "devtools", "remotes", "ape", "phangorn", "tidyverse"
 )
 bioc_packages <- c(
-  "dada2", "phyloseq", "speedyseq", "decontam", "metagMisc", "DECIPHER", "lulu",
-  "Biostrings", "BiocGenerics", "XVector", "GenomeInfoDb", "ShortRead", "RcppParallel"
+  "dada2", "phyloseq", "speedyseq", "decontam", "metagMisc", "DECIPHER", "lulu", "rBLAST",
+  "Biostrings", "BiocGenerics", "XVector", "GenomeInfoDb", "ShortRead", "RcppParallel" 
 )
 github_packages <- list(
   metagMisc = "vmikk/metagMisc",
@@ -46,42 +46,43 @@ all_packages <- unique(c(cran_packages, bioc_packages, names(github_packages)))
 invisible(lapply(all_packages, function(pkg) library(pkg, character.only = TRUE)))
 
 # USER-DEFINED VARIABLES; change these for specific project
-project_id <- "ROHR05"              # Project identifier (e.g. ROHR05)
-primer <- "12S"                     # Primers used (e.g. 12S, COI, 16S)
+project_id <- "testCOI"              # Project identifier (e.g. ROHR05)
+primer <- "COI"                     # Primers used (e.g. 12S, COI, 16S)
 tax_db <- "MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta"  # Taxonomy database
 
 # Core directories (modify if folder structure changes)
-input_root <- here("inputs")
-output_root <- here("outputs", project_id)
-figures_root <- here("figures", project_id)
-tax_root <- here("tax", tax_db)
+input_root <- here("eDNA", "inputs")
 scripts_root <- here("scripts")
+output_root <- here("eDNA", "outputs", project_id)
+figures_root <- here("eDNA", "figures", project_id)
+tax_root <- here("tax", tax_db)
+subset_tax_root <- here("tax", "midori_subset.fasta")
+
+# Input paths
+metadata_path <- here(input_root, "metadata", "metadata.csv")
+trimmed_path <- here(input_root, "trimmed", project_id, primer)
+
+# Load metadata
+metadata <- read.csv(metadata_path, header=TRUE, sep=",", row.names = NULL)
 
 # Create directories if they don't exist
 dir.create(output_root, showWarnings = FALSE)
 dir.create(figures_root, showWarnings = FALSE)
 
-# Input paths
-metadata_path <- file.path(input_root, "metadata", "metadata.csv")
-trimmed_path <- file.path(input_root, "trimmed", project_id, primer)
-
-# Load metadata
-metadata <- read.csv(metadata_path, header=TRUE, sep=",", row.names = NULL)
-
 # Output paths
-dada2_output <- file.path(output_root, paste0(project_id, "_dada2.rds"))
-track_table_path <- file.path(output_root, paste0(project_id, "_read_changes.txt"))
-nochim_output <- file.path(output_root, paste0(project_id, "_nochim.rds"))
-nochim_csv <- file.path(output_root, paste0(project_id, "_nochim.csv"))
-tax_table_path <- file.path(output_root, paste0(project_id, "_taxtable.rds"))
-phyloseq_path <- file.path(output_root, paste0(project_id, "_phyloseq.rds"))
+dada2_output <- here(output_root, paste0(project_id, "_dada2.rds"))
+track_table_path <- here(output_root, paste0(project_id, "_read_changes.txt"))
+nochim_output <- here(output_root, paste0(project_id, "_nochim.rds"))
+nochim_csv <- here(output_root, paste0(project_id, "_nochim.csv"))
+tax_table_path <- here(output_root, paste0(project_id, "_taxtable.rds"))
+phyloseq_path <- here(output_root, paste0(project_id, "_phyloseq.rds"))
 
 ################################################################
 # (2) PIPELINE EXECUTION
 ################################################################
 
-# (A) Initial Quality Assessment
-source(file.path(scripts_root, "Quality_Assessment.R"))  # This script is a function to generate quality plots for sequence reads
+# (A) INITIAL QUALITY ASSESSMENT
+source(file.path(scripts_root, "A_Quality_Assessment.R"))  # This script is a function to generate quality plots for sequence reads
 
 # Execute quality plotting
 quality_data <- generate_quality_plots(
@@ -91,7 +92,7 @@ quality_data <- generate_quality_plots(
 # load and view quality plots
 quality_data
 
-# (B) User-Defined Parameters (Modify After Viewing Plots)
+# User-Defined Parameters (Modify After Viewing Plots)
 
 # TRUNCATION PARAMETER GUIDELINES
 # 1. truncLen: Set to positions where median quality > Q30
@@ -101,12 +102,13 @@ quality_data
 # 3. truncQ: Truncate when quality scores drop below this value (usually 2)
 
 trunc_params <- list(
-  truncLen = c(220, 200),  # Set based on quality plots
+  truncLen = c(225, 215),  # Set based on quality plots
   maxEE = c(2, 2),         # Maximum expected errors
   truncQ = 2               # Truncate at first quality score < 2
 )
 
-# (C) This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+# (B) INFER ASVs WITH DADA2
+# This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
 
 # for COI, remove non-specific amplification and filter by length 310–316 bp
 COI_seqtab <- TRUE   # Set to TRUE if using COI primers, FALSE for 12S or others
@@ -114,36 +116,50 @@ COI_seqtab <- TRUE   # Set to TRUE if using COI primers, FALSE for 12S or others
 # NovaSeq bins quality scores; we need to adapt the error model to account for this using the dada2 package makeBinnedQualErrfun(binnedQ)
 NOVA <- TRUE # Set to TRUE if using NovaSeq data
 
-source(file.path(scripts_root, "Infer_ASVs_DADA2.R"))    
+source(file.path(scripts_root, "B_Infer_ASVs_DADA2.R"))   
 
 # run DADA2 processing with ncores parellel processing 
 processing_results <- run_dada2_processing(
   fnFs = quality_data$fnFs,
-   fnRs = quality_data$fnRs,
-   pathinput = trimmed_path,
-   pathoutput = dada2_output,
-   pathoutput_tracktable = track_table_path,
-   pathoutput_nochim_rds = nochim_output,
-   pathoutput_nochim_csv = nochim_csv,
-   pathfigures = figures_root,
-   trunc_params = trunc_params,
-   ncores = 8
+  fnRs = quality_data$fnRs,
+  pathinput = trimmed_path,
+  pathoutput = dada2_output,
+  pathoutput_tracktable = track_table_path,
+  pathoutput_nochim_rds = nochim_output,
+  pathoutput_nochim_csv = nochim_csv,
+  pathfigures = figures_root,
+  trunc_params = trunc_params,
+  ncores = 8
 )
+# saved track_table which shows read numbers through each step of the pipeline
+# saved nochim.rds object which contains the final ASV table after chimera removal
+# saved nochim.csv file which contains the final ASV table after chimera removal in csv format 
 
-# (D) Taxonomy Assignment
-source(file.path(scripts_root, "Assign_Taxonomy_DADA2.R"))   # This script assigns taxonomy using Dada2 Midori database to create an otu table
+# (C) TAXONOMY ASSIGNMENT DADA2
+# This is just a quick assignment to create a taxonomy table, and then a phyloseq object that can be used to detect contaminants
+
+# To speed things up, we use a version of MIDORI with a few sequences
+Midori_data <- read.FASTA(tax_root)
+Midori_small <- Midori_data[1:200]  # Subset to first 200 sequences
+writeFasta(Midori_small, file = subset_tax_root)
+
+source(file.path(scripts_root, "C_Assign_Taxonomy_DADA2.R"))   # This script assigns taxonomy using Dada2 Midori database to create an otu table
 
 tax_results <- assign_taxonomy(
   seqtab_nochim_rds = nochim_output,
-  tax_db_path = tax_root,
+  tax_db_path = subset_tax_root,
   output_dir = output_root,
   project_id = project_id,
   ncores = 8,
   seed = 119
 )
+# saved taxtable.rds object which contains the taxonomy table for the ASVs
+# saved tax.csv file which contains the taxonomy table for the ASVs in csv format
+# saved otu.csv file (essentially a copy of nochim data)
 
-# (E) Phyloseq Object Creation
-source(file.path(scripts_root, "Phyloseq.R"))          # This script creates a phyloseq object
+# (D) Phyloseq Object Creation
+# This script creates a phyloseq object
+source(file.path(scripts_root, "D_Phyloseq.R"))
 
 phy_results <- create_phyloseq(
   otu_table_rds = nochim_output,
@@ -154,6 +170,9 @@ phy_results <- create_phyloseq(
   sample_id_col = 2,
   fix_mismatches = TRUE
 )
+# saved phyloseq.rds object which combines OTU table, taxonomy table, and metadata
+# saved phy_samples.csv which contains sample data for verification
+
 
 ################################################################
 # (3) MARKER SPECIFIC STEPS

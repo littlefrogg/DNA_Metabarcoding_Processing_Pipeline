@@ -3,53 +3,44 @@
 # Paige Smallman, 2025
 
 generate_quality_plots <- function(pathinput, pathfigures) {
-  # Define possible patterns
-  patterns <- list(
-    R1 = c("_R1_001.trimmed.fastq$", "_R1_trimmed.fastq$"),
-    R2 = c("_R2_001.trimmed.fastq$", "_R2_trimmed.fastq$")
-  )
-
-  # Find which pattern exists for forward reads
-  fnFs <- NULL
-  fnRs <- NULL
-  for (i in seq_along(patterns$R1)) {
-    fnFs_try <- sort(list.files(pathinput, pattern = patterns$R1[i], full.names = TRUE))
-    fnRs_try <- sort(list.files(pathinput, pattern = patterns$R2[i], full.names = TRUE))
-    if (length(fnFs_try) > 0 && length(fnRs_try) > 0) {
-      fnFs <- fnFs_try
-      fnRs <- fnRs_try
-      break
-    }
-  }
-  if (is.null(fnFs) || is.null(fnRs) || length(fnFs) == 0 || length(fnRs) == 0) {
-    stop("No matching FASTQ files found in the input directory.")
-  }
-
+  # List forward and reverse files
+  #fnFs <- sort(list.files(pathinput, pattern = "_R1_001.trimmed.fastq", full.names = TRUE))
+  #fnRs <- sort(list.files(pathinput, pattern = "_R2_001.trimmed.fastq", full.names = TRUE))
+fnFs <- sort(list.files(pathinput, pattern = "_R1_trimmed.fastq$", full.names = TRUE))
+fnRs <- sort(list.files(pathinput, pattern = "_R2_trimmed.fastq$", full.names = TRUE))
+  
   # Remove files with very small size (likely empty)
   fnFs <- fnFs[file.size(fnFs) > 50]
   fnRs <- fnRs[file.size(fnRs) > 50]
+  
+  # Keep only pairs where both forward and reverse exist
+  #sample.names.F <- tools::file_path_sans_ext(basename(fnFs))
+ # sample.names.R <- tools::file_path_sans_ext(basename(fnRs))
+  #common.samples <- intersect(sample.names.F, sample.names.R)
+  #fnFs <- fnFs[sample.names.F %in% common.samples]
+  #fnRs <- fnRs[sample.names.R %in% common.samples]
+ # sample.names <- common.samples
 
-  # Extract sample names by removing _R1_trimmed.fastq or _R2_trimmed.fastq
-  get_sample_name <- function(x) sub("_R[12](_001)?\\.trimmed\\.fastq$", "", basename(x))
+# Extract sample names by removing _R1_trimmed.fastq or _R2_trimmed.fastq
+  get_sample_name <- function(x) sub("_R[12]_trimmed\\.fastq$", "", basename(x))
   sample.names.F <- sapply(fnFs, get_sample_name)
   sample.names.R <- sapply(fnRs, get_sample_name)
   common.samples <- intersect(sample.names.F, sample.names.R)
   fnFs <- fnFs[sample.names.F %in% common.samples]
   fnRs <- fnRs[sample.names.R %in% common.samples]
   sample.names <- common.samples
-
+  
   # Create plots
   qp_fwd <- plotQualityProfile(fnFs, aggregate = TRUE) + 
     ggtitle("Forward Reads Quality Profile")
   qp_rev <- plotQualityProfile(fnRs, aggregate = TRUE) + 
     ggtitle("Reverse Reads Quality Profile") 
-
+  
   # Save plots
   dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
   ggsave(file.path(pathfigures, "00_quality_forward.png"), qp_fwd, width = 10, height = 6)
   ggsave(file.path(pathfigures, "00_quality_reverse.png"), qp_rev, width = 10, height = 6)
-
+  
   return(list(fnFs = fnFs, fnRs = fnRs, sample.names = sample.names))
 }
-
 

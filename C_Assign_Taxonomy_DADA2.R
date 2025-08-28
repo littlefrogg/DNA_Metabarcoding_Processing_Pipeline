@@ -1,4 +1,4 @@
-#Step D script for eDNA sequence analysis pipeline #
+#Step C script for eDNA sequence analysis pipeline #
 # Paige Smallman, 2025
 # Assign taxonomy DADA2
 # this script assigns taxonomy using Dada2 Midori database to create an otu table

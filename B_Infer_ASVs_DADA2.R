@@ -1,4 +1,4 @@
-# Step C script for eDNA sequence analysis pipeline 
+# Step B script for eDNA sequence analysis pipeline 
 # DADA2 ASV_Processing
 # This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
 # called from Main Script with user-defined parameters
@@ -6,7 +6,6 @@
 run_dada2_processing <- function(
     fnFs, 
     fnRs,
-    sample.names,
     pathinput,
     pathoutput,
     pathoutput_tracktable,
@@ -16,19 +15,19 @@ run_dada2_processing <- function(
     trunc_params,
     ncores = TRUE) {
   
-# Load required packages (this is redundant in case you didn't just run other parts of the main script)
+  # Load required packages (this is redundant in case you didn't just run other parts of the main script)
   suppressPackageStartupMessages({
     require(dada2)
     require(here)
     require(ggplot2)
   })
   
-# Create output directories
-dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
-filtered_path <- file.path(pathinput, "filtered")
-dir.create(filtered_path, showWarnings = FALSE)
+  # Create output directories
+  dir.create(pathfigures, showWarnings = FALSE, recursive = TRUE)
+  filtered_path <- file.path(pathinput, "filtered")
+  dir.create(filtered_path, showWarnings = FALSE)
   
-# PARAMETER VALIDATION
+  # PARAMETER VALIDATION
   
   validate_parameters <- function(trunc_params) {
     if(length(trunc_params$truncLen) != 2) {
@@ -50,17 +49,21 @@ dir.create(filtered_path, showWarnings = FALSE)
     }
   )
   
-# FILTERING AND TRIMMING
+  # FILTERING AND TRIMMING
   
-message("\nStarting processing with parameters:")
-message(paste(capture.output(print(trunc_params)), collapse = "\n"))
+  message("\nStarting processing with parameters:")
+  message(paste(capture.output(print(trunc_params)), collapse = "\n"))
+  
+  # Extract sample names from fnFs
+  get_sample_name <- function(x) sub("_R[12]_trimmed\\.fastq$", "", basename(x))
+  sample.names <- sapply(fnFs, get_sample_name)
 
-# Set filtered file paths
-filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
-filtRs <- file.path(filtered_path, paste0(sample.names, "_R_filt.fastq.gz"))
-names(filtFs) <- names(filtRs) <- sample.names
+  # Set filtered file paths
+  filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
+  filtRs <- file.path(filtered_path, paste0(sample.names, "_R_filt.fastq.gz"))
+  names(filtFs) <- names(filtRs) <- sample.names
   
-# Perform filtering
+  # Perform filtering
   filter_stats <- filterAndTrim(
     fwd = fnFs, filt = filtFs,
     rev = fnRs, filt.rev = filtRs,
@@ -72,21 +75,24 @@ names(filtFs) <- names(filtRs) <- sample.names
     compress = TRUE,
     multithread = ncores
   )
- 
-# POST-FILTERING PROCESSING
-
-# Remove samples with zero reads after filtering
-keep <- file.exists(filtFs) & file.exists(filtRs)
-filtFs <- filtFs[keep]
-filtRs <- filtRs[keep]
-
+  
+  # POST-FILTERING PROCESSING
+  
+  # Remove samples with zero reads after filtering
+  keep <- file.exists(filtFs) & file.exists(filtRs)
+  filtFs <- filtFs[keep]
+  filtRs <- filtRs[keep]
+  
   if(length(filtFs) == 0) {
     stop("No samples remaining after filtering. Check input files and parameters.")
   }
   
-# ERROR MODELING
+  # ERROR MODELING
   
-  # learning errror rates either for NovaSeq or Illumina data
+  message("\nLearning error models...")
+  # Learn error rates with multithreading and randomization
+
+  # Novaseq needs a different error model
   if (NOVA) {
     message("running error model for NovaSeq data")
     binnedQs <- c(2, 11, 25, 37)
@@ -98,65 +104,65 @@ filtRs <- filtRs[keep]
     errF <- learnErrors(filtFs, multithread = ncores, randomize = TRUE)
     errR <- learnErrors(filtRs, multithread = ncores, randomize = TRUE)
   }
-
-# Plot error profiles (nominalQ = TRUE is standard, FALSE for troubleshooting)
-plotErrors(errF, nominalQ = TRUE)
-plotErrors(errR, nominalQ = TRUE)
   
-# Dereplicate reads and assign names
-sam.names <- tools::file_path_sans_ext(basename(filtFs))
-derepFs <- derepFastq(filtFs, verbose = TRUE)
-names(derepFs) <- sam.names
-derepRs <- derepFastq(filtRs, verbose = TRUE)
-names(derepRs) <- sam.names
+  # Plot error profiles (nominalQ = TRUE is standard, FALSE for troubleshooting)
+  plotErrors(errF, nominalQ = TRUE)
+  plotErrors(errR, nominalQ = TRUE)
   
-# Sample inference
-dadaFs <- dada(derepFs, err = errF, multithread = TRUE)
-dadaRs <- dada(derepRs, err = errR, multithread = TRUE)
+  # Dereplicate reads and assign names
+  sam.names <- tools::file_path_sans_ext(basename(filtFs))
+  derepFs <- derepFastq(filtFs, verbose = TRUE)
+  names(derepFs) <- sam.names
+  derepRs <- derepFastq(filtRs, verbose = TRUE)
+  names(derepRs) <- sam.names
   
-# Merge paired ends
+  # Sample inference
+  dadaFs <- dada(derepFs, err = errF, multithread = TRUE)
+  dadaRs <- dada(derepRs, err = errR, multithread = TRUE)
+  
+  # Merge paired ends
   mergers <- mergePairs(
     dadaFs, derepFs,
     dadaRs, derepRs,
     verbose = TRUE
   )
   
-# Construct sequence table
-seqtab <- makeSequenceTable(mergers)
-message("\nInitial ASV table dimensions: ", paste(dim(seqtab), collapse = " x "))
+  # Construct sequence table
+  seqtab <- makeSequenceTable(mergers)
+  message("\nInitial ASV table dimensions: ", paste(dim(seqtab), collapse = " x "))
   
   if (COI_seqtab) {
-  message("Filtering ASVs to keep only those with length 310–316 bp")
-  seqtab <- seqtab[, nchar(colnames(seqtab)) %in% 310:316]
-} else {
-  message("Keeping all ASVs regardless of length")
-}
-
-# CHIMERA REMOVAL
-
+    message("Filtering ASVs to keep only those with length 310–316 bp")
+    seqtab <- seqtab[, nchar(colnames(seqtab)) %in% 310:316]
+  } else {
+    message("Keeping all ASVs regardless of length")
+  }
+  
+  # CHIMERA REMOVAL
+  
   seqtab_nochim <- removeBimeraDenovo(
     seqtab,
     method = "consensus",
     multithread = 10,
     verbose = TRUE
   )
-message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse = " x "))
+  message("Post-chimera removal dimensions: ", paste(dim(seqtab_nochim), collapse = " x "))
   
-# OUTPUT GENERATION
- 
-# Save sequence tables
-saveRDS(seqtab, pathoutput)
-saveRDS(seqtab_nochim, pathoutput_nochim_rds)
-write.csv(seqtab.nochim, pathoutput_nochim_csv)
-
+  # OUTPUT GENERATION
+  
+  # Save sequence tables
+  saveRDS(seqtab, pathoutput)
+  saveRDS(seqtab_nochim, pathoutput_nochim_rds)
+  write.csv(seqtab_nochim, pathoutput_nochim_csv)
+  
 message("nrow(filter_stats[keep,]): ", nrow(filter_stats[keep,]))
 message("length(dadaFs): ", length(dadaFs))
 message("length(dadaRs): ", length(dadaRs))
 message("length(mergers): ", length(mergers))
-message("length(rowSums(seqtab_nochim)): ", length(rowSums(seqtab_nochim))) 
+message("length(rowSums(seqtab_nochim)): ", length(rowSums(seqtab_nochim)))
 
-# Create tracking table
-getN <- function(x) sum(getUniques(x))
+  # Create tracking table
+  getN <- function(x) sum(getUniques(x))
   track <- cbind(
     filter_stats[keep,],
     sapply(dadaFs, getN),
@@ -164,15 +170,15 @@ getN <- function(x) sum(getUniques(x))
     sapply(mergers, getN),
     rowSums(seqtab_nochim)
   )
-colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+  colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
   
-write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE, col.names = NA)
+  write.table(track, pathoutput_tracktable, sep = "\t", quote = FALSE, col.names = NA)
   
-message("\nASV processing complete!")
-message("Output files saved to:")
-message("- ASV Table: ", pathoutput)
-message("- Chimera-free Table: ", pathoutput_nochim_rds)
-message("- Read Tracking: ", pathoutput_tracktable)
+  message("\nASV processing complete!")
+  message("Output files saved to:")
+  message("- ASV Table: ", pathoutput)
+  message("- Chimera-free Table: ", pathoutput_nochim_rds)
+  message("- Read Tracking: ", pathoutput_tracktable)
   
   return(list(
     seqtab = seqtab,
