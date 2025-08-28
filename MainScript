@@ -62,13 +62,6 @@ subset_tax_root <- here("tax", "midori_subset.fasta")
 metadata_path <- here(input_root, "metadata", "metadata.csv")
 trimmed_path <- here(input_root, "trimmed", project_id, primer)
 
-# Load metadata
-metadata <- read.csv(metadata_path, header=TRUE, sep=",", row.names = NULL)
-
-# Create directories if they don't exist
-dir.create(output_root, showWarnings = FALSE)
-dir.create(figures_root, showWarnings = FALSE)
-
 # Output paths
 dada2_output <- here(output_root, paste0(project_id, "_dada2.rds"))
 track_table_path <- here(output_root, paste0(project_id, "_read_changes.txt"))
@@ -76,6 +69,34 @@ nochim_output <- here(output_root, paste0(project_id, "_nochim.rds"))
 nochim_csv <- here(output_root, paste0(project_id, "_nochim.csv"))
 tax_table_path <- here(output_root, paste0(project_id, "_taxtable.rds"))
 phyloseq_path <- here(output_root, paste0(project_id, "_phyloseq.rds"))
+
+# CLEANING STEPS
+# 1. Check and transpose OTU table if needed
+if (file.exists(nochim_output)) {
+  otu <- readRDS(nochim_output)
+  # If OTU table has fewer rows than columns, likely needs transposing
+  if (nrow(otu) < ncol(otu)) {
+    message("Transposing OTU table to have OTUs as rows and samples as columns...")
+    otu <- t(otu)
+    saveRDS(otu, nochim_output)
+  }
+}
+# 2. Check and fix metadata sample IDs for uniqueness
+if (file.exists(metadata_path)) {
+  meta <- read.csv(metadata_path, header=TRUE)
+  if (any(duplicated(meta[[1]]))) {
+    message("Making metadata sample IDs unique...")
+    meta[[1]] <- make.unique(as.character(meta[[1]]), sep = "_")
+    write.csv(meta, metadata_path, row.names=FALSE)
+  }
+}
+
+# Load metadata
+metadata <- read.csv(metadata_path, header=TRUE)
+
+# Create directories if they don't exist
+dir.create(output_root, showWarnings = FALSE)
+dir.create(figures_root, showWarnings = FALSE)
 
 ################################################################
 # (2) PIPELINE EXECUTION
@@ -141,7 +162,7 @@ processing_results <- run_dada2_processing(
 # To speed things up, we use a version of MIDORI with a few sequences
 Midori_data <- read.FASTA(tax_root)
 Midori_small <- Midori_data[1:200]  # Subset to first 200 sequences
-writeFasta(Midori_small, file = subset_tax_root)
+ape::write.FASTA(Midori_small, file = subset_tax_root)
 
 source(file.path(scripts_root, "C_Assign_Taxonomy_DADA2.R"))   # This script assigns taxonomy using Dada2 Midori database to create an otu table
 
@@ -167,7 +188,7 @@ phy_results <- create_phyloseq(
   metadata_path = metadata_path,
   output_dir = output_root,
   project_id = project_id,
-  sample_id_col = 2,
+  sample_id_col = 1,
   fix_mismatches = TRUE
 )
 # saved phyloseq.rds object which combines OTU table, taxonomy table, and metadata

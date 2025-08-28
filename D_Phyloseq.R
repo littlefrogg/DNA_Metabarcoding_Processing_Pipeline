@@ -43,9 +43,9 @@ tax_table <- readRDS(tax_table_rds)
 message("Taxonomy table dimensions: ", paste(dim(tax_table), collapse = " x "))
   
 # Validate table compatibility
-  if(ncol(otu_table) != nrow(tax_table)) {
+  if(nrow(otu_table) != nrow(tax_table)) {
     stop("OTU/Taxonomy table mismatch: ",
-         ncol(otu_table), " OTUs vs ",
+         nrow(otu_table), " OTUs vs ",
          nrow(tax_table), " taxa")
   }
   
@@ -76,7 +76,7 @@ if(length(unlist(mismatches)) > 0) {
       # Subset to intersecting samples
       common_samples <- intersect(otu_samples, meta_samples)
       
-      otu_table <- otu_table[common_samples, ]
+      otu_table <- otu_table[ ,common_samples]
       metadata <- metadata[common_samples, ]
       
       message("Retained ", length(common_samples), " matching samples")
@@ -90,7 +90,7 @@ if(length(unlist(mismatches)) > 0) {
 message("\nConstructing phyloseq object...")
   
   ps <- phyloseq(
-    otu_table(otu_table, taxa_are_rows = FALSE),
+    otu_table(otu_table, taxa_are_rows = TRUE),
     sample_data(metadata),
     tax_table(tax_table)
   )
