@@ -45,7 +45,6 @@ message("\nIdentifying contaminants using prevalence method...")
   
 # Mark negative controls
 sample_data(ps)$is_neg <- sample_data(ps)[[control_col]] %in% neg_controls
-sample_data(ps)$lib_size <- sample_sums(ps)
   
 # Detect contaminants
   contam_df <- isContaminant(

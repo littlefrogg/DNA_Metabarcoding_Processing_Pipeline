@@ -10,16 +10,18 @@
 # if prevalence of a sequence is higher in control = contaminant
 
 run_COI_decontamination <- function(
-    physeq_path,
-    output_dir,
-    project_id,
-    control_col = "sample_type",
-    neg_controls = c("extraction control", "field control", "pcr control"),
-    min_reads = 1000,
-    prevalence_threshold = 0.1,
-    max_n_ratio = 0.005,       # Stricter N filter for protein-coding
-    frame_shift_check = TRUE,  # Check for pseudogenes
-    seed = 123) {
+  physeq_path,
+  asv_seqs_path,
+  output_dir,
+  project_id,
+  control_col = "sample_type",
+  neg_controls = c("extraction control", "field control", "pcr control"),
+  min_reads = 300,
+  prevalence_threshold = 0.05,
+  max_n_ratio = 0.001,       # Stricter N filter for protein-coding
+  frame_shift_check = TRUE,  # Check for pseudogenes
+  manual_remove_taxa = NULL
+  ) {
   
   suppressPackageStartupMessages({
     require(phyloseq)
@@ -36,37 +38,49 @@ dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
 message("\nLoading phyloseq object...")
 ps <- readRDS(physeq_path)
-  
+
+
+# Load ASV sequences and match to phyloseq object
+asv_seqs <- readRDS(asv_seqs_path)
+asv_seqs <- asv_seqs[taxa_names(ps)]
+# Save original, unfiltered asv_seqs for contaminant export
+asv_seqs_all <- asv_seqs
+
 # Validate sequences exist
-  if(is.null(refseq(ps))) {
-    stop("Phyloseq object requires refseq() containing DNA sequences")
-  }
-  
+if (is.null(asv_seqs) || length(asv_seqs) != ntaxa(ps)) {
+  stop("ASV sequences must be provided as a DNAStringSet and match taxa_names(ps)")
+}
 
 # PRE-FILTERING FOR COI CHARACTERISTICS
 
 message("\nApplying COI-specific pre-filters...")
   
 # 1. Length filtering (remove extreme lengths)
-seq_lengths <- width(refseq(ps))
+seq_lengths <- width(asv_seqs)
 length_cutoff <- quantile(seq_lengths, c(0.01, 0.99))
 keep_length <- seq_lengths >= length_cutoff[1] & seq_lengths <= length_cutoff[2]
-  
+
 # 2. N-content filtering
-n_content <- letterFrequency(refseq(ps), "N", as.prob=TRUE)
+n_content <- letterFrequency(asv_seqs, "N", as.prob=TRUE)
 keep_n <- n_content <= max_n_ratio
-  
+
 # 3. Frame shift detection (requires alignment - simplified example)
-  if(frame_shift_check) {
-    # In practice: Align to reference COI and check indels
-    # Here we use simple length modulo 3 check
-    keep_frame <- width(refseq(ps)) %% 3 == 0
-  } else {
-    keep_frame <- rep(TRUE, ntaxa(ps))
-  }
-  
+if(frame_shift_check) {
+  # In practice: Align to reference COI and check indels
+  # Here we use simple length modulo 3 check
+  keep_frame <- width(asv_seqs) %% 3 == 0
+} else {
+  keep_frame <- rep(TRUE, ntaxa(ps))
+}
+
 # Apply all filters
-ps <- prune_taxa(keep_length & keep_n & keep_frame, ps)
+# Create a logical vector for filtering
+keep <- keep_length & keep_n & keep_frame
+# Ensure it's a named logical vector and not a matrix
+keep <- as.vector(keep)
+names(keep) <- taxa_names(ps)
+ps <- prune_taxa(keep, ps)
+asv_seqs <- asv_seqs[keep]
   
 # CONTAMINANT IDENTIFICATION (SIMILAR TO 12S BUT MORE STRICT)
 
@@ -74,35 +88,33 @@ message("\nIdentifying contaminants with COI-specific parameters...")
   
 # Mark negative controls
 sample_data(ps)$is_neg <- sample_data(ps)[[control_col]] %in% neg_controls
-sample_data(ps)$lib_size <- sample_sums(ps)
   
 # Use combined prevalence/frequency method for COI
-  contam_df <- isContaminant(
-    ps,
-    method = "combined",
-    neg = "is_neg",
-    threshold = 0.3,  # More conservative threshold
-    normalize = TRUE,
-    batch = NULL,
-    frequency = TRUE
-  )
+contam_df <- isContaminant(
+  ps,
+  method = "prevalence",
+  neg = "is_neg",
+  threshold = prevalence_threshold,  # More conservative threshold
+  normalize = TRUE,
+  batch = NULL
+)
+## Remove debug printouts
   
 # NUMT-SPECIFIC FILTERING
   
 message("\nApplying NUMT detection heuristics...")
   
 # 1. Sequence composition analysis
-gc_content <- letterFrequency(refseq(ps), "GC", as.prob=TRUE)[,1]
+gc_content <- letterFrequency(asv_seqs, "GC", as.prob=TRUE)[,1]
 gc_outliers <- gc_content < quantile(gc_content, 0.01) | gc_content > quantile(gc_content, 0.99)
-  
+
 # 2. Stop codon check (requires translation)
-dna <- refseq(ps)
-aa <- translate(dna, if.fuzzy.codon="solve")
-has_stop <- vapply(aa, function(x) any(x == "*"), logical(1))
-  
+aa <- safe_translate(asv_seqs, if.fuzzy.codon="solve")
+has_stop <- vcountPattern("*", aa) > 0
+
 # 3. Evolutionary distance filtering (placeholder)
 # In practice: Align to reference database and compute distances
-  
+
 # Combine NUMT indicators
 numt_candidates <- gc_outliers | has_stop
   
@@ -128,12 +140,41 @@ ggsave(file.path(output_dir, "numt_detection.png"), numt_plot, width=8, height=6
 message("\nRemoving contaminants and NUMTs...")
   
 # Remove contaminants and NUMTs
-ps_clean <- prune_taxa(!contam_df$contaminant, ps)
-  
-# Additional COI-specific filters
-  ps_clean <- ps_clean %>%
-    subset_samples(lib_size >= min_reads) %>%
-    prune_taxa(taxa_sums(.) > 0, .)
+keep_taxa <- taxa_names(ps)[!contam_df$contaminant]
+if (length(keep_taxa) == 0) {
+  stop("No taxa remain after contaminant/NUMT filtering. Check your thresholds or contaminant detection.")
+}
+ps_clean <- prune_taxa(keep_taxa, ps)
+if (ntaxa(ps_clean) == 0) stop("No taxa remain after contaminant/NUMT filtering.")
+
+# Recalculate lib_size after pruning
+sample_data(ps_clean)$lib_size <- sample_sums(ps_clean)
+
+# Get sample names to keep
+keep_samples <- sample_names(ps_clean)[sample_data(ps_clean)$lib_size >= min_reads]
+if (length(keep_samples) == 0) stop("No samples remain after library size filtering.")
+
+# Subset each component
+otu <- otu_table(ps_clean)[, keep_samples, drop=FALSE]
+tax <- tax_table(ps_clean)
+samp <- sample_data(ps_clean)[keep_samples, , drop=FALSE]
+
+# Rebuild phyloseq object
+ps_clean <- phyloseq(otu, tax, samp)
+if (nsamples(ps_clean) == 0) {
+  stop("No samples remain after library size filtering.")
+}
+
+# Prune taxa with taxa_sums > 0
+ps_clean <- prune_taxa(taxa_sums(ps_clean) > 0, ps_clean)
+if (ntaxa(ps_clean) == 0) stop("No taxa remain after final pruning.")
+
+# Manual removal step if needed
+if (!is.null(manual_remove_taxa)) {
+  ps_clean <- prune_taxa(!taxa_names(ps_clean) %in% manual_remove_taxa, ps_clean)
+  message(paste0("Manually removed ", length(manual_remove_taxa), " taxa."))
+  if (ntaxa(ps_clean) == 0) stop("No taxa remain after manual removal.")
+}
   
 # OUTPUT GENERATION
 
@@ -141,28 +182,33 @@ output_path <- file.path(output_dir, paste0(project_id, "_COI_clean.rds"))
 saveRDS(ps_clean, output_path)
   
 # Save contaminant sequences with metadata
-  contam_data <- data.frame(
-    sequence = refseq(ps)[contam_df$contaminant],
-    reason = ifelse(contam_df$numt, "NUMT", "Contaminant"),
-    p_value = contam_df$p
-  )
+contam_data <- data.frame(
+  sequence = as.character(asv_seqs_all[rownames(contam_df)]),
+  reason = ifelse(contam_df$numt, "NUMT", "Contaminant"),
+  p_value = contam_df$p
+)
 write.csv(contam_data, file.path(output_dir, "coi_contaminants.csv"))
-  
-  return(list(
-    phyloseq_clean = ps_clean,
-    output_path = output_path,
-    contaminants = contam_df,
-    numt_stats = table(numt_candidates),
-    filtered_sequences = ntaxa(ps) - ntaxa(ps_clean)
-  ))
+
+return(list(
+  phyloseq_clean = ps_clean,
+  output_path = output_path,
+  contaminants = contam_df,
+  numt_stats = table(numt_candidates),
+  filtered_sequences = ntaxa(ps) - ntaxa(ps_clean)
+))
 }
 
 # Helper function to translate DNA
-translate <- function(dna, ...) {
-  sapply(as.character(dna), function(x) {
-    tryCatch(
-      Biostrings::translate(DNAString(x), ...),
+safe_translate <- function(dna, ...) {
+  cat("safe_translate called on", length(dna), "sequences\n")
+  translated_sequences <- list()
+  for (i in seq_along(dna)) {
+    sequence <- as.character(dna[i])
+    translated_aa <- tryCatch(
+      Biostrings::translate(DNAString(sequence), ...),
       error = function(e) AAString("")
     )
-  })
+    translated_sequences[[i]] <- translated_aa
+  }
+  return(AAStringSet(translated_sequences))
 }

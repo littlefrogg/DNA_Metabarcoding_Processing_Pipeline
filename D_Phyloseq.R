@@ -36,17 +36,31 @@ message("\nLoading input data...")
   
 # Load OTU table
 otu_table <- readRDS(otu_table_rds)
-message("OTU table dimensions: ", paste(dim(otu_table), collapse = " x "))
+message("OTU table dimension: ", paste(dim(otu_table), collapse = " x "))
+print(paste("nrow(otu_table):", nrow(otu_table)))
+print(paste("ncol(otu_table):", ncol(otu_table)))
   
 # Load taxonomy table
 tax_table <- readRDS(tax_table_rds)
 message("Taxonomy table dimensions: ", paste(dim(tax_table), collapse = " x "))
-  
+print(paste("nrow(tax_table):", nrow(tax_table)))
+
+# Debug: print first few row and column names
+print("First OTU table rownames (should be OTU IDs):")
+print(head(rownames(otu_table)))
+print("First OTU table colnames (should be sample IDs):")
+print(head(colnames(otu_table)))
+print("First tax_table rownames (should be OTU IDs):")
+print(head(rownames(tax_table)))
+
 # Validate table compatibility
+  print(paste("nrow(otu_table):", nrow(otu_table)))
+  print(paste("ncol(otu_table):", ncol(otu_table)))
+  print(paste("nrow(tax_table):", nrow(tax_table)))
   if(nrow(otu_table) != nrow(tax_table)) {
-    stop("OTU/Taxonomy table mismatch: ",
+    stop(paste0("OTU/Taxonomy table mismatch: ",
          nrow(otu_table), " OTUs vs ",
-         nrow(tax_table), " taxa")
+         nrow(tax_table), " taxa"))
   }
   
 # Load metadata
@@ -56,7 +70,7 @@ message("Metadata dimensions: ", paste(dim(metadata), collapse = " x "))
 # SAMPLE VALIDATION
   
 # Get sample IDs
-otu_samples <- rownames(otu_table)
+otu_samples <- colnames(otu_table)
 meta_samples <- rownames(metadata)
   
   mismatches <- list(
@@ -76,7 +90,7 @@ if(length(unlist(mismatches)) > 0) {
       # Subset to intersecting samples
       common_samples <- intersect(otu_samples, meta_samples)
       
-      otu_table <- otu_table[ ,common_samples]
+      otu_table <- otu_table[, common_samples]
       metadata <- metadata[common_samples, ]
       
       message("Retained ", length(common_samples), " matching samples")
@@ -88,13 +102,13 @@ if(length(unlist(mismatches)) > 0) {
 # PHYLOSEQ CONSTRUCTION
   
 message("\nConstructing phyloseq object...")
-  
+
   ps <- phyloseq(
     otu_table(otu_table, taxa_are_rows = TRUE),
     sample_data(metadata),
     tax_table(tax_table)
   )
-  
+
 message("\nPhyloseq object created:")
 print(ps)
   
