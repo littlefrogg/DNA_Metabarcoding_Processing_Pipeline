@@ -250,7 +250,7 @@ saveRDS(asv_dna, file = asv_seqs_path)
 ps <- readRDS(phyloseq_path)
 asv_seqs <- readRDS(asv_seqs_path)
 
-source(file.path(scripts_root, "Decontam_COI.R"))
+source(file.path(scripts_root, "COI_A_Decontam.R"))
 
 coi_decon <- run_COI_decontamination(
   physeq_path = phyloseq_path,
