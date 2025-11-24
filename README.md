@@ -4,22 +4,39 @@ Paige's DNA metabarcoding processing work in progress code
 
 By Paige Smallman based on code written by Matthieu Leray, Helio Quintero, Luisa Meister, and Saul Fernando Rodriguez
 
-  (parts of this code have been written or edited using generative AI, including ChatGPT-4o and Perplexity) 
+  (parts of this code have been written or edited using generative AI) 
 
 This pipeline is made to be run + adjusted only through the Main Script. Additional scripts are internal and called using the source function in the Main Script.
 
 
 **WORKFLOW:**
 
-use cutadapt before running this code to trim adapters
-
-1. Set up R environment and user-defined variables depending on project (ROHR05_12S)
+  (use cutadapt before running this code to trim adapters)
+1. Set up R environment and user-defined variables depending on project
 2. Generate quality plots for sequencing reads
 3. Adjust truncation parameters based on quality plots
 4. Filter + Trim and infer Amplicon Sequence Variants (ASVs)
 5. Assign Taxonomy using DADA2 Midori database; create a table of Operational Taxonomic Units (OTUs)
 6. Create a phyloseq table (a tool to import, store, analyze, and graphically display complex phylogenetic sequencing data)
 7. Continue processing steps based on primers used (12S vs. COI)
+
+*COI processing steps*
+
+- A. Remove contaminants, control and outlier samples with decontam
+- B. Cluster ASVs using DECIPHER
+- C. Prepare an OTU table and FASTA file for external curation
+ (Run vsearch to curate OTU)
+- D. curate the OTU table using the LULU algorithm
+- E. BLAST to assign taxonomy
+- F. Curate LCA with galaxy tool
+- G. Create final curated Phyloseq object
+
+*12S processing steps*
+
+- A. Remove contaminants, control and outlier samples with decontam
+- B. BLAST to assign taxonomy
+- C. Curate LCA with galaxy tool
+- D. Create final curated Phyloseq object
 
 **Directory Organization:**
 
@@ -37,3 +54,5 @@ trimmed:
 Project with multiple primers (ex. ROHR01):
 
 <img width="538" alt="Screenshot 2025-04-20 at 10 54 43 AM" src="https://github.com/user-attachments/assets/acca4af6-c866-4f7d-94f4-e13d2562e538" />
+
+

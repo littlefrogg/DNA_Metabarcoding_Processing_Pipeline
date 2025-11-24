@@ -278,7 +278,7 @@ asv_seqs <- readRDS(asv_seqs_path)
 # Add reference sequences to phyloseq object
 methods::slot(ps_clean, "refseq") <- asv_seqs
 
-source(file.path(scripts_root, "Cluster_ASVs_COI.R")) # this script clusters similar ASVs into OTUs with 97% similarity
+source(file.path(scripts_root, "COI_B_Cluster_ASVs.R")) # this script clusters similar ASVs into OTUs with 97% similarity
 
 # Run clustering
 ps_otu <- cluster_coi_asvs(
@@ -299,7 +299,7 @@ asv_seqs <- readRDS(asv_seqs_path)
 # Match ASV names with phyloseq object
 methods::slot(ps_otu, "refseq") <- asv_seqs
 
-source(file.path(scripts_root, "VSsearch_Prep_COI.R")) # this script extracts ASVs and prepares them for Vsearch
+source(file.path(scripts_root, "COI_C_VSsearch_Prep.R")) # this script extracts ASVs and prepares them for Vsearch
 
 # Run the OTU curation and vsearch prep step
 curate_otus(
@@ -312,7 +312,7 @@ curate_otus(
 
 # set directory to where VSEARCH FASTA file was just saved 
 # example: cd /path/to/folder/eDNA/testCOI/outputs
-# then run v search with: 
+# then run vsearch with: 
 # vsearch --usearch_global testCOI_otus.fasta --db testCOI_otus.fasta --self --id 0.84 --iddef 1 --userout match_list97.txt --userfields query+target+id --maxaccepts 0 --query_cov 0.9 --maxhits 10
 #                          ^change this to your own .fasta file name
 
@@ -336,7 +336,7 @@ vsearch_matches <- read.table(vsearch_output_path, header = FALSE, col.names = c
 fasta_file_path <- file.path(output_root, paste0(project_id, "_otus.fasta"))
 fasta_seqs <- Biostrings::readDNAStringSet(fasta_file_path)
 
-source(file.path(scripts_root, "Lulu_Curation_COI.R"))
+source(file.path(scripts_root, "COI_D_Lulu_Curation.R"))
 
 ps_curated <- curate_lulu(
   ps_object = ps_otu,
