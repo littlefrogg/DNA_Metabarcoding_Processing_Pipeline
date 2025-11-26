@@ -73,6 +73,8 @@ asv_seqs_path <- here(output_root, paste0(project_id, "_ASV_sequences.rds"))
 clustered_phyloseq_path <- here(output_root, paste0(project_id, "_clustered_phyloseq.rds"))
 vsearch_output_path <- file.path(output_root, "match_list97.txt")
 curated_phyloseq_path <- here(output_root, paste0(project_id, "_lulu_curated.rds"))
+curated_fasta_path <- file.path(output_root, paste0(project_id, "_curated_otus.fasta"))
+blast_output_path <- here(output_root, "blast_top10_hits.tsv") # Add this line for consistency
 
 # ----------------------
 # CLEANING STEPS (must be before any data is loaded)
@@ -333,26 +335,67 @@ ps_otu <- readRDS(clustered_phyloseq_path)
 
 # Make sure the 'matchlist_name' variable is what you used in the previous step
 vsearch_matches <- read.table(vsearch_output_path, header = FALSE, col.names = c("OTUid", "hit", "match"))
-fasta_file_path <- file.path(output_root, paste0(project_id, "_otus.fasta"))
-fasta_seqs <- Biostrings::readDNAStringSet(fasta_file_path)
 
+# Source and run the lulu curation function
 source(file.path(scripts_root, "COI_D_Lulu_Curation.R"))
-
 ps_curated <- curate_lulu(
   ps_object = ps_otu,
   matchlist_df = vsearch_matches
 )
 
+# Save the curated phyloseq object
 saveRDS(ps_curated, curated_phyloseq_path)
-
-
 # saved curated phyloseq object to curated_phyloseq_path
 
-## BLAST (in Terminal) ####
+
+# Extract and save curated sequences for BLAST ---
+# Get the DNA sequences from the curated phyloseq object
+curated_seqs <- refseq(ps_curated)
+
+# Write the sequences to a FASTA file
+Biostrings::writeXStringSet(curated_seqs, filepath = curated_fasta_path)
+# curated OTU sequences saved to curated_fasta_path
+
+## Generate and Run BLAST Script ####
 # To run BLAST, you need to have the BLAST+ command line tools installed
 ## Download latest MIDORI CO1 unique database from http://www.reference-midori.info/download.php# 
 # unzip the downloaded file and save it to the tax_root directory
 
+# Define paths for the template and the final output script
+blast_template_path <- here(scripts_root, "COI_E_Blast_template.sh")
+final_blast_script_path <- here(output_root, "run_blast.sh")
+
+# Read the template file
+blast_script_template <- readLines(blast_template_path)
+
+# BLAST CONFIGURATION (for HPC/SLURM)
+blast_account     <- "your_account_name"      # <-- IMPORTANT: User must change this
+blast_email       <- "your_email@domain.com"  # <-- IMPORTANT: User must change this
+blast_time        <- "01:00:00"               # Job run time (HH:MM:SS)
+blast_cpus        <- 10                       # Number of CPUs (must match threads)
+blast_mem         <- "4G"                     # Memory allocation (e.g., 4G, 8G)
+blast_db_name     <- "MIDORI2_UNIQ_NUC_GB267_CO1_BLAST" # Name of pre-formatted BLAST db on cluster
+blast_evalue      <- 1e-5                     # E-value cutoff for BLAST search
+
+# run these lines to replace placeholders in the template
+blast_script_configured <- gsub("__ACCOUNT_NAME__", blast_account, blast_script_template)
+blast_script_configured <- gsub("__EMAIL__", blast_email, blast_script_configured)
+blast_script_configured <- gsub("__TIME__", blast_time, blast_script_configured)
+blast_script_configured <- gsub("__CPUS__", blast_cpus, blast_script_configured)
+blast_script_configured <- gsub("__MEM__", blast_mem, blast_script_configured)
+blast_script_configured <- gsub("__DB_NAME__", blast_db_name, blast_script_configured)
+blast_script_configured <- gsub("__EVALUE__", blast_evalue, blast_script_configured)
+blast_script_configured <- gsub("__QUERY_FILE__", curated_fasta_path, blast_script_configured)
+blast_script_configured <- gsub("__OUTPUT_FILE__", blast_output_path, blast_script_configured)
+
+writeLines(blast_script_configured, final_blast_script_path)
+
+# Make the script executable (for Unix-like systems)
+system(paste("chmod +x", final_blast_script_path))
+
+# Instructions to run BLAST on HPC/SLURM
+message(paste("cd", output_root))
+message("sbatch run_blast.sh")
 
 ## Curate LCA with galaxy tool ####
 
