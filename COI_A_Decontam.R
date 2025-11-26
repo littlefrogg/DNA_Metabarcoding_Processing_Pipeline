@@ -33,7 +33,7 @@ run_COI_decontamination <- function(
   
 # Create output directory
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-  
+
 # DATA LOADING & VALIDATION
 
 message("\nLoading phyloseq object...")
@@ -54,7 +54,7 @@ if (is.null(asv_seqs) || length(asv_seqs) != ntaxa(ps)) {
 # PRE-FILTERING FOR COI CHARACTERISTICS
 
 message("\nApplying COI-specific pre-filters...")
-  
+
 # 1. Length filtering (remove extreme lengths)
 seq_lengths <- width(asv_seqs)
 length_cutoff <- quantile(seq_lengths, c(0.01, 0.99))
@@ -81,14 +81,14 @@ keep <- as.vector(keep)
 names(keep) <- taxa_names(ps)
 ps <- prune_taxa(keep, ps)
 asv_seqs <- asv_seqs[keep]
-  
+
 # CONTAMINANT IDENTIFICATION (SIMILAR TO 12S BUT MORE STRICT)
 
 message("\nIdentifying contaminants with COI-specific parameters...")
-  
+
 # Mark negative controls
 sample_data(ps)$is_neg <- sample_data(ps)[[control_col]] %in% neg_controls
-  
+
 # Use combined prevalence/frequency method for COI
 contam_df <- isContaminant(
   ps,
@@ -99,11 +99,11 @@ contam_df <- isContaminant(
   batch = NULL
 )
 ## Remove debug printouts
-  
+
 # NUMT-SPECIFIC FILTERING
-  
+
 message("\nApplying NUMT detection heuristics...")
-  
+
 # 1. Sequence composition analysis
 gc_content <- letterFrequency(asv_seqs, "GC", as.prob=TRUE)[,1]
 gc_outliers <- gc_content < quantile(gc_content, 0.01) | gc_content > quantile(gc_content, 0.99)
@@ -117,7 +117,7 @@ has_stop <- vcountPattern("*", aa) > 0
 
 # Combine NUMT indicators
 numt_candidates <- gc_outliers | has_stop
-  
+
 # Mark contaminants and NUMTs
 contam_df$numt <- numt_candidates
 contam_df$contaminant <- contam_df$contaminant | numt_candidates
@@ -125,7 +125,7 @@ contam_df$contaminant <- contam_df$contaminant | numt_candidates
 # VISUALIZATION & DIAGNOSTICS
 
 message("\nGenerating COI-specific diagnostic plots...")
-  
+
 # NUMT diagnostic plot
   numt_plot <- ggplot(data.frame(gc_content, has_stop), 
                       aes(x=gc_content, fill=has_stop)) +
@@ -134,11 +134,11 @@ message("\nGenerating COI-specific diagnostic plots...")
     theme_minimal()
   
 ggsave(file.path(output_dir, "numt_detection.png"), numt_plot, width=8, height=6)
-  
+
 # DECONTAMINATION & FILTERING
- 
+
 message("\nRemoving contaminants and NUMTs...")
-  
+
 # Remove contaminants and NUMTs
 keep_taxa <- taxa_names(ps)[!contam_df$contaminant]
 if (length(keep_taxa) == 0) {
@@ -175,12 +175,12 @@ if (!is.null(manual_remove_taxa)) {
   message(paste0("Manually removed ", length(manual_remove_taxa), " taxa."))
   if (ntaxa(ps_clean) == 0) stop("No taxa remain after manual removal.")
 }
-  
+
 # OUTPUT GENERATION
 
 output_path <- file.path(output_dir, paste0(project_id, "_COI_clean.rds"))
 saveRDS(ps_clean, output_path)
-  
+
 # Save contaminant sequences with metadata
 contam_data <- data.frame(
   sequence = as.character(asv_seqs_all[rownames(contam_df)]),

@@ -344,4 +344,19 @@ ps_curated <- curate_lulu(
 )
 
 saveRDS(ps_curated, curated_phyloseq_path)
+
+
 # saved curated phyloseq object to curated_phyloseq_path
+
+## BLAST (in Terminal) ####
+# To run BLAST, you need to have the BLAST+ command line tools installed
+## Download latest MIDORI CO1 unique database from http://www.reference-midori.info/download.php# 
+# unzip the downloaded file and save it to the tax_root directory
+
+
+## Curate LCA with galaxy tool ####
+
+
+## Create final phyloseq object ####
+
+## 12S (MiFish) #########################################################
