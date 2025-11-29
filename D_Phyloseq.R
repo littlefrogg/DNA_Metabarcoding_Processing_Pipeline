@@ -1,146 +1,87 @@
-#Step D script for eDNA sequence analysis pipeline #
-# Paige Smallman, 2025
-#Creating phylosec object
+################################################################
+# (D) CREATE INITIAL PHYLOSEQ OBJECT
+################################################################
+# Purpose: This script defines a function to combine the ASV table, taxonomy
+#          table, and sample metadata into a phyloseq object.
+#
+# Input:
+#   - otu_table:     The ASV table (matrix) from DADA2.
+#   - tax_table:     The taxonomy table (matrix) from DADA2.
+#   - metadata_path: File path to the sample metadata CSV file.
+#   - output_path:   File path to save the final phyloseq RDS object.
+#
+# Output:
+#   - A phyloseq object containing the combined data.
+#   - The phyloseq object is also saved to disk at `output_path`.
+#
+# Author: Paige Smallman, 2025
+################################################################
 
-create_phyloseq <- function(
-    otu_table_rds,
-    tax_table_rds,
-    metadata_path,
-    output_dir,
-    project_id,
-    sample_id_col = 2,
-    fix_mismatches = FALSE) {
-  
-# Load required packages
+create_phyloseq <- function(otu_table,
+                            tax_table,
+                            metadata_path,
+                            output_path) {
+
+  # --- 1. Load Packages and Validate Inputs ---
   suppressPackageStartupMessages({
     require(phyloseq)
-    require(here)
     require(tidyverse)
   })
-  
-# INPUT VALIDATION
 
-# Check input files exist
-inputs <- c(otu_table_rds, tax_table_rds, metadata_path)
-  if(any(!file.exists(inputs))) {
-    missing <- inputs[!file.exists(inputs)]
-    stop("Missing input files:\n", paste(missing, collapse = "\n"))
+  # Check that input objects are in the correct format
+  if (!is.matrix(otu_table) || !is.matrix(tax_table)) {
+    stop("Input 'otu_table' and 'tax_table' must be matrices.")
   }
-  
-# Create output directory
-dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-  
-# DATA LOADING
-  
-message("\nLoading input data...")
-  
-# Load OTU table
-otu_table <- readRDS(otu_table_rds)
-message("OTU table dimension: ", paste(dim(otu_table), collapse = " x "))
-print(paste("nrow(otu_table):", nrow(otu_table)))
-print(paste("ncol(otu_table):", ncol(otu_table)))
-  
-# Load taxonomy table
-tax_table <- readRDS(tax_table_rds)
-message("Taxonomy table dimensions: ", paste(dim(tax_table), collapse = " x "))
-print(paste("nrow(tax_table):", nrow(tax_table)))
-
-# Debug: print first few row and column names
-print("First OTU table rownames (should be OTU IDs):")
-print(head(rownames(otu_table)))
-print("First OTU table colnames (should be sample IDs):")
-print(head(colnames(otu_table)))
-print("First tax_table rownames (should be OTU IDs):")
-print(head(rownames(tax_table)))
-
-# Validate table compatibility
-  print(paste("nrow(otu_table):", nrow(otu_table)))
-  print(paste("ncol(otu_table):", ncol(otu_table)))
-  print(paste("nrow(tax_table):", nrow(tax_table)))
-  if(nrow(otu_table) != nrow(tax_table)) {
-    stop(paste0("OTU/Taxonomy table mismatch: ",
-         nrow(otu_table), " OTUs vs ",
-         nrow(tax_table), " taxa"))
+  # Check that the metadata file exists
+  if (!file.exists(metadata_path)) {
+    stop("Metadata file not found at: ", metadata_path)
   }
-  
-# Load metadata
-metadata <- read.csv(metadata_path, header = TRUE, sep = ",", row.names = sample_id_col)
-message("Metadata dimensions: ", paste(dim(metadata), collapse = " x "))
-  
-# SAMPLE VALIDATION
-  
-# Get sample IDs
-otu_samples <- colnames(otu_table)
-meta_samples <- rownames(metadata)
-  
-  mismatches <- list(
-    missing_in_meta = setdiff(otu_samples, meta_samples),
-    missing_in_otu = setdiff(meta_samples, otu_samples)
-  )
-  
-if(length(unlist(mismatches)) > 0) {
-    message("\nSample mismatches detected:")
-    message("- Samples in OTU table missing from metadata: ", 
-            length(mismatches$missing_in_meta))
-    message("- Samples in metadata missing from OTU table: ", 
-            length(mismatches$missing_in_otu))
-    
-    if(fix_mismatches) {
-      message("\nResolving mismatches...")
-      # Subset to intersecting samples
-      common_samples <- intersect(otu_samples, meta_samples)
-      
-      otu_table <- otu_table[, common_samples]
-      metadata <- metadata[common_samples, ]
-      
-      message("Retained ", length(common_samples), " matching samples")
-    } else {
-      warning("Sample mismatches present. Use fix_mismatches=TRUE to automatically subset")
-    }
-  }
-  
-# PHYLOSEQ CONSTRUCTION
-  
-message("\nConstructing phyloseq object...")
 
+  # --- 2. Load and Process Metadata ---
+  message("\nLoading and processing metadata from: ", metadata_path)
+  # Assuming the first column of the metadata CSV contains the sample IDs
+  metadata <- read.csv(metadata_path, header = TRUE, row.names = 1)
+  message("Metadata dimensions: ", paste(dim(metadata), collapse = " x "))
+
+  # --- 3. Synchronize Samples between OTU Table and Metadata ---
+  # Get sample IDs from both the OTU table and the metadata
+  otu_samples <- colnames(otu_table)
+  meta_samples <- rownames(metadata)
+
+  # Find samples that are common to both
+  common_samples <- intersect(otu_samples, meta_samples)
+  
+  # Report any mismatches
+  missing_in_meta <- setdiff(otu_samples, meta_samples)
+  missing_in_otu <- setdiff(meta_samples, otu_samples)
+
+  if (length(missing_in_meta) > 0) {
+    message("Warning: ", length(missing_in_meta), " samples from the OTU table are missing in the metadata and will be removed.")
+  }
+  if (length(missing_in_otu) > 0) {
+    message("Warning: ", length(missing_in_otu), " samples from the metadata are missing in the OTU table and will be removed.")
+  }
+
+  # Subset both tables to include only the common samples
+  otu_table_synced <- otu_table[, common_samples]
+  metadata_synced <- metadata[common_samples, ]
+  message("Retained ", length(common_samples), " matching samples for phyloseq object construction.")
+
+  # --- 4. Construct and Save Phyloseq Object ---
+  message("\nConstructing phyloseq object...")
   ps <- phyloseq(
-    otu_table(otu_table, taxa_are_rows = TRUE),
-    sample_data(metadata),
+    otu_table(otu_table_synced, taxa_are_rows = TRUE),
+    sample_data(metadata_synced),
     tax_table(tax_table)
   )
 
-message("\nPhyloseq object created:")
-print(ps)
-  
-# OUTPUT GENERATION
-  
-output_path <- file.path(output_dir, paste0(project_id, "_phyloseq.rds"))
-saveRDS(ps, output_path)
-message("\nSaved phyloseq object to: ", output_path)
-  
-# DIAGNOSTIC OUTPUTS
-  
-# Save sample data for verification
-  write.csv(
-    as(sample_data(ps), "data.frame"),
-    file = file.path(output_dir, paste0(project_id, "_phy_samples.csv")),
-    row.names = TRUE
-  )
-  
-  return(list(
-    phyloseq = ps,
-    output_path = output_path,
-    mismatches = mismatches
-  ))
-}
+  message("\nPhyloseq object created:")
+  print(ps)
 
-# Example usage:
-# phy_results <- create_phyloseq(
-#   otu_table_rds = here("outputs/ROHR05/ROHR05.nochim.rds"),
-#   tax_table_rds = here("outputs/ROHR05/ROHR05_taxtable.rds"),
-#   metadata_path = here("inputs/metadata/metadata.csv"),
-#   output_dir = here("outputs/ROHR05"),
-#   project_id = "ROHR05",
-#   sample_id_col = 2,
-#   fix_mismatches = TRUE
-# )
+  # Save the final phyloseq object
+  saveRDS(ps, file = output_path)
+  message("Initial phyloseq object saved to: ", output_path)
+
+  # Return the phyloseq object to the main script
+  return(ps)
+}

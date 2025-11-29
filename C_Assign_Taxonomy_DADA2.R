@@ -1,41 +1,53 @@
-#Step C script for eDNA sequence analysis pipeline #
-# Paige Smallman, 2025
-# Assign taxonomy DADA2
-# this script assigns taxonomy using Dada2 Midori database to create an otu table
+################################################################
+# (C) INITIAL TAXONOMY ASSIGNMENT (DADA2)
+################################################################
+# Purpose: This script defines a function to assign taxonomy to ASVs using
+#          the DADA2 `assignTaxonomy` function.
+#
+# Input:
+#   - seqtab_nochim: The chimera-free ASV table (a matrix) from DADA2.
+#   - tax_db_path:   File path to the DADA2-formatted taxonomy database.
+#   - output_path:   File path to save the final taxonomy table RDS object.
+#   - ncores:        Number of cores for parallel processing.
+#   - seed:          A random seed for reproducibility.
+#
+# Output:
+#   - A taxonomy table (matrix) with ASVs as rows and taxonomic ranks as columns.
+#   - The taxonomy table is also saved to disk at `output_path`.
+#
+# Author: Paige Smallman, 2025
+################################################################
 
 assign_taxonomy <- function(
-    seqtab_nochim_rds,
+    seqtab_nochim,
     tax_db_path,
-    output_dir,
-    project_id,
+    output_path,
     ncores = TRUE,
     seed = 119) {
   
 # Load required packages
   suppressPackageStartupMessages({
     require(dada2)
-    require(here)
-    require(phyloseq)
   })
   
 # INPUT VALIDATION
   
-# Check input files exist
-  if(!file.exists(seqtab_nochim_rds)) {
-    stop("ASV table not found: ", seqtab_nochim_rds)
+# Check that the taxonomy database file exists
+  if (!file.exists(tax_db_path)) {
+    stop("Taxonomy database not found at: ", tax_db_path)
   }
-  
-  if(!file.exists(tax_db_path)) {
-    stop("Taxonomy database not found: ", tax_db_path)
+  # Check that the input is a matrix
+  if (!is.matrix(seqtab_nochim)) {
+    stop("Input 'seqtab_nochim' is not a matrix. Please provide a valid ASV table.")
   }
   
 # Create output directory
-dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(output_path, showWarnings = FALSE, recursive = TRUE)
   
 # DATA LOADING
   
 message("\nLoading chimera-free ASV table...")
-seqtab_nochim <- readRDS(seqtab_nochim_rds)
+seqtab_nochim <- readRDS(seqtab_nochim)
   
 # TAXONOMY ASSIGNMENT
 
@@ -44,69 +56,28 @@ message("Assigning taxonomy using database: ", basename(tax_db_path))
 # Set seed for reproducibility
 set.seed(seed)
   
-# Time execution
+# Time the execution for user feedback
 start_time <- Sys.time()
   
-  taxtab <- assignTaxonomy(
+  tax_table <- assignTaxonomy(
     seqs = seqtab_nochim,
     refFasta = tax_db_path,
     multithread = ncores,
-    tryRC = TRUE,  # Try reverse complement
+    tryRC = TRUE,  # Also check the reverse-complement for a match
     verbose = TRUE
   )
   
+end_time <- Sys.time()
 message("Taxonomy assignment completed in ", 
-        round(difftime(Sys.time(), start_time, units = "mins"), 1), 
-         " minutes")
+        round(difftime(end_time, start_time, units = "mins"), 1), 
+         " minutes.")
   
 # OUTPUT GENERATION
  
-# Save RDS
-tax_rds_path <- file.path(output_dir, paste0(project_id, "_taxtable.rds"))
-saveRDS(taxtab, tax_rds_path)
+# Save the final taxonomy table as an RDS object
+saveRDS(tax_table, file = output_path)
+message("Taxonomy table saved to: ", output_path)
   
-# Create phyloseq objects
-message("\nCreating taxonomic outputs...")
-ps_tax <- tax_table(taxtab)
-ps_otu <- otu_table(seqtab_nochim, taxa_are_rows = FALSE)
-  
-# Save CSV files
-  write.csv(
-    as(ps_tax, "matrix"),
-    file = file.path(output_dir, paste0(project_id, "_tax.csv")),
-    row.names = TRUE
-  )
-  
-  write.csv(
-    as(ps_otu, "matrix"),
-    file = file.path(output_dir, paste0(project_id, "_otu.csv")),
-    row.names = TRUE
-  )
-  
-# QUALITY CONTROL
-  
-message("\nTaxonomic summary:")
-print(table(taxtab[,1], useNA = "always"))
-  
-message("\nTop taxonomic assignments:")
-print(head(taxtab, n = 3))
-  
-  return(list(
-    taxtab = taxtab,
-    tax_path = tax_rds_path,
-    csv_paths = c(
-      tax = file.path(output_dir, paste0(project_id, "_tax.csv")),
-      otu = file.path(output_dir, paste0(project_id, "_otu.csv"))
-    )
-  ))
+# Return the taxonomy table object to the main script
+return(tax_table)
 }
-
-# Example usage:
-# tax_results <- assign_taxonomy(
-#   seqtab_nochim_rds = here("outputs/ROHR05/ROHR05.nochim.rds"),
-#   tax_db_path = here("tax/MIDORI2_UNIQ_NUC_GB264_srRNA_DADA2.fasta"),
-#   output_dir = here("outputs/ROHR05"),
-#   project_id = "ROHR05",
-#   ncores = 8,
-#   seed = 119
-# )

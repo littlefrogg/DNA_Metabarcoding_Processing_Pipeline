@@ -1,58 +1,44 @@
 ################################################################
-# CURATE OTUs AND PREPARE FOR VSEARCH - DNA metabarcoding
+# (COI-C) PREPARE FOR VSEARCH - DNA metabarcoding processing
+################################################################
+# Purpose: This script defines a function to extract the representative
+#          sequences from an OTU-clustered phyloseq object and save them
+#          as a FASTA file. This file is required as input for the VSEARCH
+#          all-vs-all search used by LULU.
+#
+# Input:
+#   - ps_object:         A phyloseq object (must be OTU-clustered).
+#   - output_fasta_path: The full file path to save the output FASTA file.
+#
+# Output:
+#   - A FASTA file containing the representative sequences of the OTUs.
+#
+# Author: Paige Smallman, 2025
 ################################################################
 
-# This function prepares an OTU table and FASTA file for external curation
-# with tools like LULU or VSEARCH. It takes a phyloseq object as input.
+prepare_for_vsearch <- function(ps_object, output_fasta_path) {
 
-curate_otus <- function(ps_object, output_dir, project_id) {
-
-  # Load required packages
+  # --- 1. Load Packages and Validate Inputs ---
   suppressPackageStartupMessages({
     require(phyloseq)
     require(Biostrings)
-    require(tidyverse)
   })
 
-  # --- A: Prepare OTU table as a data frame (unchanged) ---
-  otu_mat <- otu_table(ps_object) %>%
-    as.data.frame() %>%
-    t()
-
-  otu_df <- otu_mat %>%
-    as.data.frame() %>%
-    rownames_to_column("OTU")
-
-  # --- B: Prepare FASTA file for external tools (e.g., vsearch) ---
-  message("\n[", Sys.time(), "] Preparing FASTA file for VSEARCH match list...")
-  
-  # Extract reference sequences
-  ref_seqs <- refseq(ps_object)
+  # Extract reference sequences and check if they exist
+  ref_seqs <- refseq(ps_object, errorIfNULL = FALSE)
   if (is.null(ref_seqs)) {
-    stop("Phyloseq object missing reference sequences (refseq).")
+    stop("The input phyloseq object is missing reference sequences (refseq), which are required.")
   }
 
-  # Create a data frame with the correct OTU IDs from your phyloseq object
-  otu_seqs_df <- tibble(
-    # Use the OTU names directly from the refseq object
-    OTU = names(ref_seqs),
-    Seq = as.character(ref_seqs)
-  )
+  # --- 2. Write Sequences to FASTA File ---
+  message("\nPreparing FASTA file for VSEARCH...")
+  
+  # Use the robust writeXStringSet function to create the FASTA file
+  Biostrings::writeXStringSet(ref_seqs, filepath = output_fasta_path)
+  
+  message("FASTA file of OTU representative sequences saved to: ", output_fasta_path)
 
-  # Create a FASTA-formatted character vector
-  fa <- character(2 * nrow(otu_seqs_df))
-  fa[c(TRUE, FALSE)] <- paste0(">", otu_seqs_df$OTU)
-  fa[c(FALSE, TRUE)] <- otu_seqs_df$Seq
-
-  fasta_file <- file.path(output_dir, paste0(project_id, "_otus.fasta"))
-  writeLines(fa, con = fasta_file)
-  message("Saved FASTA file to: ", fasta_file)
-
-  # --- C: Save OTU table as a CSV for external use (unchanged) ---
-  otu_file <- file.path(output_dir, paste0(project_id, "_otu_table.csv"))
-  write.csv(otu_mat, file = otu_file, row.names = TRUE)
-  message("Saved OTU table to: ", otu_file)
-
-  message("\n[", Sys.time(), "] OTU curation step complete. Run VSEARCH with the generated FASTA file.")
-  invisible(NULL)
+  # --- 3. Return ---
+  # This function's main purpose is to write a file, so it returns nothing.
+  return(invisible(NULL))
 }

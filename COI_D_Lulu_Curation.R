@@ -1,13 +1,25 @@
 ################################################################
-# LULU OTU CURATION - DNA metabarcoding processing
+# (COI-D) CURATE OTUS WITH LULU - DNA metabarcoding processing
+################################################################
+# Purpose: This script defines a function to curate an OTU table using the
+#          LULU algorithm, which removes putatively erroneous OTUs based on
+#          co-occurrence and similarity with more abundant "parent" OTUs.
+#
+# Input:
+#   - ps_object:    A phyloseq object (must be OTU-clustered).
+#   - matchlist_df: A data frame from VSEARCH containing the match list.
+#   - output_path:  File path to save the final curated phyloseq RDS object.
+#
+# Output:
+#   - A new, curated phyloseq object with erroneous OTUs removed.
+#   - The curated phyloseq object is also saved to disk at `output_path`.
+#
+# Author: Paige Smallman, 2025
 ################################################################
 
-# This function curates an OTU table using the LULU algorithm, which removes
-# putatively erroneous OTUs based on co-occurrence with more abundant OTUs.
+curate_lulu <- function(ps_object, matchlist_df, output_path) {
 
-curate_lulu <- function(ps_object, matchlist_df) {
-
-  # Load required packages
+  # --- 1. Load Packages and Validate Inputs ---
   suppressPackageStartupMessages({
     require(phyloseq)
     require(lulu)
@@ -16,39 +28,48 @@ curate_lulu <- function(ps_object, matchlist_df) {
 
   # Check inputs
   if (!is(ps_object, "phyloseq")) {
-    stop("Input ps_object must be a phyloseq object.")
+    stop("Input 'ps_object' must be a phyloseq object.")
   }
   if (!is.data.frame(matchlist_df)) {
-    stop("matchlist_df must be a data frame.")
+    stop("Input 'matchlist_df' must be a data frame.")
   }
 
-  # Prepare OTU table for LULU
-  otu_table_lulu <- otu_table(ps_object) %>%
-    as.data.frame()
-    
-  # DEFENSIVE CODING: Ensure only numeric columns are included
-  # This step filters out any non-numeric columns that may have been added
-  # in previous steps, such as OTU IDs or sequences.
-  otu_table_lulu <- otu_table_lulu[, sapply(otu_table_lulu, is.numeric)]
+  # --- 2. Prepare OTU Table and Run LULU ---
+  # Extract the OTU table as a matrix, which is the required format for lulu
+  otu_table_lulu <- as(otu_table(ps_object), "matrix")
   
-  # Ensure row names are character for consistency
-  rownames(otu_table_lulu) <- as.character(rownames(otu_table_lulu))
+  # Ensure taxa are rows for lulu processing
+  if (taxa_are_rows(ps_object) == FALSE) {
+    otu_table_lulu <- t(otu_table_lulu)
+  }
 
   # Run the LULU curation algorithm
-  message("\n[", Sys.time(), "] Starting LULU curation...")
-  curated_result <- lulu(otu_table_lulu, matchlist_df)
+  message("\nStarting LULU curation...")
+  curated_result <- lulu(otu_table_lulu, matchlist_df, minimum_match = 84)
 
-  # Extract the curated OTU table and a list of retained OTU IDs
-  curated_table <- curated_result$curated_table
-  retained_otus <- rownames(curated_table)
-
+  # --- 3. Filter Phyloseq Object ---
+  # Get the list of OTU IDs that were kept after curation
+  retained_otus <- rownames(curated_result$curated_table)
+  
   message("LULU curation complete. ",
-          nrow(curated_table), " out of ",
-          nrow(otu_table_lulu), " OTUs were retained.")
+          length(retained_otus), " out of ",
+          ntaxa(ps_object), " OTUs were retained.")
   message("A total of ", curated_result$discarded_count, " OTUs were discarded.")
   
-  # Filter the phyloseq object to keep only the curated OTUs
-  curated_ps_object <- prune_taxa(retained_otus, ps_object)
+  # Prune the original phyloseq object to keep only the curated OTUs
+  ps_curated <- prune_taxa(retained_otus, ps_object)
   
-  return(curated_ps_object)
+  # IMPORTANT: Replace the OTU table in the pruned object with the lulu-curated table.
+  # This ensures that read counts from discarded OTUs are correctly merged into their parent OTUs.
+  otu_table(ps_curated) <- otu_table(curated_result$curated_table, taxa_are_rows = TRUE)
+
+  # --- 4. Save Output and Return ---
+  # Save the final curated phyloseq object
+  saveRDS(ps_curated, file = output_path)
+  message("Lulu-curated phyloseq object saved to: ", output_path)
+  
+  print(ps_curated)
+  
+  # Return the curated phyloseq object to the main script
+  return(ps_curated)
 }

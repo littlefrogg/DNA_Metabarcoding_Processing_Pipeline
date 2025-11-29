@@ -3,11 +3,11 @@
 ################################################################
 
 # COI TEST MAIN
-# Aug 8, 2025
+# Nov 29, 2025
 # R version 4.5
 
 ################################################################
-# (1) SET UP & PARAMETERS
+# (1) PACKAGE MANAGEMENT
 ################################################################
 
 # Load necessary libraries
@@ -16,7 +16,7 @@ cran_packages <- c(
 )
 bioc_packages <- c(
   "dada2", "phyloseq", "speedyseq", "decontam", "metagMisc", "DECIPHER", "lulu", "rBLAST",
-  "Biostrings", "BiocGenerics", "XVector", "GenomeInfoDb", "ShortRead", "RcppParallel" 
+  "Biostrings", "BiocGenerics", "XVector", "GenomeInfoDb", "ShortRead", "RcppParallel"
 )
 github_packages <- list(
   metagMisc = "vmikk/metagMisc",
@@ -45,338 +45,207 @@ for(pkg in names(github_packages)) {
 all_packages <- unique(c(cran_packages, bioc_packages, names(github_packages)))
 invisible(lapply(all_packages, function(pkg) library(pkg, character.only = TRUE)))
 
-# USER-DEFINED VARIABLES; change these for specific project
-project_id <- "testCOI"              # Project identifier (e.g. ROHR05)
-primer <- "COI"                     # Primers used (e.g. 12S, COI, 16S)
-tax_db <- "MIDORI2_UNIQ_NUC_GB267_CO1_DADA2.fasta"  # Taxonomy database
-
-# Core directories (modify if folder structure changes)
-input_root <- here("eDNA", "inputs")
-scripts_root <- here("eDNA", "scripts")
-output_root <- here("eDNA", "outputs", project_id)
-figures_root <- here("eDNA", "figures", project_id)
-tax_root <- here("eDNA", "tax", tax_db)
-subset_tax_root <- here("eDNA","tax", "midori_subset.fasta")
-
-# Input paths
-metadata_path <- here(input_root, "metadata", "metadata_unique.csv")
-trimmed_path <- here(input_root, "trimmed", project_id, primer)
-
-# Output paths
-dada2_output <- here(output_root, paste0(project_id, "_dada2.rds"))
-track_table_path <- here(output_root, paste0(project_id, "_read_changes.txt"))
-nochim_output <- here(output_root, paste0(project_id, "_nochim_transposed.rds"))
-nochim_csv <- here(output_root, paste0(project_id, "_nochim.csv"))
-tax_table_path <- here(output_root, paste0(project_id, "_taxtable.rds"))
-phyloseq_path <- here(output_root, paste0(project_id, "_phyloseq.rds"))
-asv_seqs_path <- here(output_root, paste0(project_id, "_ASV_sequences.rds"))
-clustered_phyloseq_path <- here(output_root, paste0(project_id, "_clustered_phyloseq.rds"))
-vsearch_output_path <- file.path(output_root, "match_list97.txt")
-curated_phyloseq_path <- here(output_root, paste0(project_id, "_lulu_curated.rds"))
-curated_fasta_path <- file.path(output_root, paste0(project_id, "_curated_otus.fasta"))
-blast_output_path <- here(output_root, "blast_top10_hits.tsv") # Add this line for consistency
-
-# ----------------------
-# CLEANING STEPS (must be before any data is loaded)
-# ----------------------
-# 1. Check and transpose OTU table if needed
-if (file.exists(nochim_output)) {
-  otu <- readRDS(nochim_output)
-  # If OTU table has fewer rows than columns, likely needs transposing
-  if (nrow(otu) < ncol(otu)) {
-    message("Transposing OTU table to have OTUs as rows and samples as columns...")
-    otu <- t(otu)
-    saveRDS(otu, nochim_output)
-  }
-}
-
-# 2. Check and fix metadata sample IDs for uniqueness
-if (file.exists(metadata_path)) {
-  meta <- read.csv(metadata_path, header=TRUE)
-  if (any(duplicated(meta[[1]]))) {
-    message("Making metadata sample IDs unique...")
-    meta[[1]] <- make.unique(as.character(meta[[1]]), sep = "_")
-    write.csv(meta, metadata_path, row.names=FALSE)
-  }
-}
-
-# Now safe to load metadata
-metadata <- read.csv(metadata_path, header=TRUE)
-
-# Create directories if they don't exist
-dir.create(output_root, showWarnings = FALSE)
-dir.create(figures_root, showWarnings = FALSE)
 
 ################################################################
-# (2) PIPELINE EXECUTION
+# (2) USER CONFIGURATION - SET ALL PARAMETERS HERE
 ################################################################
 
-# (A) INITIAL QUALITY ASSESSMENT
-source(file.path(scripts_root, "A_Quality_Assessment.R"))  # This script is a function to generate quality plots for sequence reads
+# --- Project & File Settings ---
+project_id    <- "testCOI"
+primer        <- "COI"
+metadata_file <- "metadata_unique.csv"
+tax_db        <- "MIDORI2_UNIQ_NUC_GB267_CO1_DADA2.fasta"
 
-# Execute quality plotting
-quality_data <- generate_quality_plots(
-  pathinput = trimmed_path,
-  pathfigures = figures_root
-)
-# load and view quality plots
-quality_data
-
-# User-Defined Parameters (Modify After Viewing Plots)
-
-# TRUNCATION PARAMETER GUIDELINES
-# 1. truncLen: Set to positions where median quality > Q30
-#    - Check 00_quality_forward.png and 00_quality_reverse.png
-#    - Example: Forward drops at 220bp, Reverse at 200bp → c(220,200)
-# 2. maxEE: Maximum expected errors (typically 2-3 for each read)
-# 3. truncQ: Truncate when quality scores drop below this value (usually 2)
-
+# --- DADA2 Parameters (Review after Step A) ---
 trunc_params <- list(
-  truncLen = c(225, 215),  # Set based on quality plots
-  maxEE = c(2, 2),         # Maximum expected errors
-  truncQ = 2               # Truncate at first quality score < 2
+  truncLen = c(225, 215),  # Forward and Reverse read truncation length
+  maxEE = c(2, 2),         # Max expected errors
+  truncQ = 2               # Truncate at first quality score < this value
 )
+COI_seqtab <- TRUE # TRUE to filter seq table by length 310–316 bp for COI
+NOVA_seq   <- TRUE # TRUE if data is from NovaSeq (to handle binned quality scores)
 
-# (B) INFER ASVs WITH DADA2
-# This script filters + trims reads, infers Amplicon Sequence Variants (ASVs)
+# --- Decontamination Parameters ---
+decon_min_reads   <- 300   # Min reads for a sample to be considered in prevalence check
+decon_max_n_ratio <- 0.001 # Max ratio of 'N' bases allowed in a sequence (stricter for COI)
 
-# for COI, remove non-specific amplification and filter by length 310–316 bp
-COI_seqtab <- TRUE   # Set to TRUE if using COI primers, FALSE for 12S or others
-
-# NovaSeq bins quality scores; we need to adapt the error model to account for this using the dada2 package makeBinnedQualErrfun(binnedQ)
-NOVA <- TRUE # Set to TRUE if using NovaSeq data
-
-source(file.path(scripts_root, "B_Infer_ASVs_DADA2.R"))   
-
-# run DADA2 processing with ncores parellel processing 
-processing_results <- run_dada2_processing(
-  fnFs = quality_data$fnFs,
-  fnRs = quality_data$fnRs,
-  pathinput = trimmed_path,
-  pathoutput = dada2_output,
-  pathoutput_tracktable = track_table_path,
-  pathoutput_nochim_rds = nochim_output,
-  pathoutput_nochim_csv = nochim_csv,
-  pathfigures = figures_root,
-  trunc_params = trunc_params,
-  ncores = 8
-)
-# saved track_table which shows read numbers through each step of the pipeline
-# saved nochim.rds object which contains the final ASV table after chimera removal
-# saved nochim.csv file which contains the final ASV table after chimera removal in csv format 
-
-# (C) TAXONOMY ASSIGNMENT DADA2
-# This is just a quick assignment to create a taxonomy table, and then a phyloseq object that can be used to detect contaminants
-
-# To speed things up, we use a version of MIDORI with a few sequences
-Midori_data <- read.FASTA(tax_root)
-# Subset to the first 200 sequences
-Midori_small <- Midori_data[1:200]
-# Convert the DNAbin object to a list of character vectors
-Midori_small_char <- as.character(Midori_small)
-# NEW STEP: Convert all sequences to uppercase
-Midori_small_char_upper <- lapply(Midori_small_char, toupper)
-# Get the names of the sequences
-sequence_names <- labels(Midori_small)
-# Open a file connection for writing
-file_conn <- file(subset_tax_root, "w")
-# Loop through each sequence to write it manually
-for (i in 1:length(Midori_small_char_upper)) {
-  # Write the header line, starting with ">" and the sequence name
-  writeLines(paste0(">", sequence_names[i]), file_conn)
-  
-  # Write the uppercase sequence
-  writeLines(paste(Midori_small_char_upper[[i]], collapse = ""), file_conn)
-}
-# Close the file connection to save the file
-close(file_conn)
-
-source(file.path(scripts_root, "C_Assign_Taxonomy_DADA2.R"))   # This script assigns taxonomy using Dada2 Midori database to create an otu table
-
-tax_results <- assign_taxonomy(
-  seqtab_nochim_rds = nochim_output,
-  tax_db_path = subset_tax_root,
-  output_dir = output_root,
-  project_id = project_id,
-  ncores = 8,
-  seed = 119
-)
-# saved taxtable.rds object which contains the taxonomy table for the ASVs
-# saved tax.csv file which contains the taxonomy table for the ASVs in csv format
-# saved otu.csv file (essentially a copy of nochim data)
-
-# (D) Phyloseq Object Creation
-# This script creates a phyloseq object
-source(file.path(scripts_root, "D_Phyloseq.R"))
-
-phy_results <- create_phyloseq(
-  otu_table_rds = nochim_output,
-  tax_table_rds = tax_table_path,
-  metadata_path = metadata_path,
-  output_dir = output_root,
-  project_id = project_id,
-  sample_id_col = 1,
-  fix_mismatches = TRUE
-)
-# saved phyloseq.rds object which combines OTU table, taxonomy table, and metadata
-# saved phy_samples.csv which contains sample data for verification
-
-# Add the library size to the phyloseq object before continuing with decontamination
-ps <- readRDS(phyloseq_path)
-sample_data(ps)$lib_size <- sample_sums(ps)
-saveRDS(ps, phyloseq_path)
-
-# extract ASV sequences and write them to a FASTA file
-# Load your ASV table (nochim_output)
-asv_tab <- readRDS(nochim_output)
-# Extract ASV sequences (row names)
-asv_seqs <- rownames(asv_tab)
-# Create a DNAStringSet object
-asv_dna <- DNAStringSet(asv_seqs)
-names(asv_dna) <- taxa_names(readRDS(phyloseq_path)) # Ensure names match phyloseq object
-# Write to FASTA
-writeXStringSet(asv_dna, filepath = file.path(output_root, paste0(project_id, "_ASV_sequences.fasta")))
-# Save as RDS for easy loading later
-saveRDS(asv_dna, file = asv_seqs_path)
-
-################################################################
-# (3) MARKER SPECIFIC STEPS
-################################################################
-
-## CO1 #########################################################
-
-## Remove contaminants with Decontam ####
-# COI requires additional steps to address nuclear mitochondrial pseudogenes
-
-#reload phyloseq object and match ASV/OTU names
-ps <- readRDS(phyloseq_path)
-asv_seqs <- readRDS(asv_seqs_path)
-
-source(file.path(scripts_root, "COI_A_Decontam.R"))
-
-coi_decon <- run_COI_decontamination(
-  physeq_path = phyloseq_path,
-  asv_seqs_path = asv_seqs_path,
-  output_dir = output_root,
-  project_id = project_id,
-  control_col = "sample_type",
-  neg_controls = c("extraction control", "field control", "pcr control"),
-  min_reads = 300,  # eDNA samples are expected to have relatively low reads
-  prevalence_threshold = 0.05,
-  max_n_ratio = 0.001,  # Stricter for COI 0.001
-  frame_shift_check = TRUE,
-  manual_remove_taxa = NULL # add sequences to remove manually here if needed
-)
-
-# cleaned phyloseq object after decontamination and COI-specific filtering
-ps_clean <- coi_decon$phyloseq_clean
-
-## Cluster ASVs with Decipher ####
-
-#reload phyloseq object and match ASV/OTU names
-ps <- readRDS(phyloseq_path)
-asv_seqs <- readRDS(asv_seqs_path)
-
-# Add reference sequences to phyloseq object
-methods::slot(ps_clean, "refseq") <- asv_seqs
-
-source(file.path(scripts_root, "COI_B_Cluster_ASVs.R")) # this script clusters similar ASVs into OTUs with 97% similarity
-
-# Run clustering
-ps_otu <- cluster_coi_asvs(
-  ps_object = ps_clean,
-  output_dir = output_root,
-  project_id = project_id,
-  cutoff = 0.03,       # 97% similarity threshold
-  min_coverage = 0.8   # Minimum sequence overlap
-)
-# saved clustered_phyloseq.rds stored at clustered_phyloseq_path
-
-## Create match list with Vsearch ####
-
-# reload required rds files
-ps_otu <- readRDS(clustered_phyloseq_path)
-asv_seqs <- readRDS(asv_seqs_path)
-
-# Match ASV names with phyloseq object
-methods::slot(ps_otu, "refseq") <- asv_seqs
-
-source(file.path(scripts_root, "COI_C_VSsearch_Prep.R")) # this script extracts ASVs and prepares them for Vsearch
-
-# Run the OTU curation and vsearch prep step
-curate_otus(
-  ps_object = ps_otu,
-  output_dir = output_root,
-  project_id = project_id
-)
-
-## USE VSEARCH (In Terminal) ##
-
-# set directory to where VSEARCH FASTA file was just saved 
-# example: cd /path/to/folder/eDNA/testCOI/outputs
-# then run vsearch with: 
-# vsearch --usearch_global testCOI_otus.fasta --db testCOI_otus.fasta --self --id 0.84 --iddef 1 --userout match_list97.txt --userfields query+target+id --maxaccepts 0 --query_cov 0.9 --maxhits 10
-#                          ^change this to your own .fasta file name
-
-# After you have run the vsearch command in your terminal
-# Read the vsearch output back into R
-vsearch_matches <- read.table(vsearch_output_path, header = FALSE, col.names = c("OTUid", "hit", "match"))
-
-# Clean up the data
-vsearch_matches$OTUid <- as.character(vsearch_matches$OTUid)
-vsearch_matches$hit <- as.character(vsearch_matches$hit)
-
-# You can now use this 'vsearch_matches' data frame for further curation
-
-## Curate OTUs with lulu ####
-
-# reload ps_otu
-ps_otu <- readRDS(clustered_phyloseq_path)
-
-# Make sure the 'matchlist_name' variable is what you used in the previous step
-vsearch_matches <- read.table(vsearch_output_path, header = FALSE, col.names = c("OTUid", "hit", "match"))
-
-# Source and run the lulu curation function
-source(file.path(scripts_root, "COI_D_Lulu_Curation.R"))
-ps_curated <- curate_lulu(
-  ps_object = ps_otu,
-  matchlist_df = vsearch_matches
-)
-
-# Save the curated phyloseq object
-saveRDS(ps_curated, curated_phyloseq_path)
-# saved curated phyloseq object to curated_phyloseq_path
-
-# Extract and save curated sequences for BLAST ---
-# Get the DNA sequences from the curated phyloseq object
-curated_seqs <- refseq(ps_curated)
-
-# Write the sequences to a FASTA file
-Biostrings::writeXStringSet(curated_seqs, filepath = curated_fasta_path)
-# curated OTU sequences saved to curated_fasta_path
-
-## Generate and Run BLAST Script ####
-# To run BLAST, you need to have the BLAST+ command line tools installed
-## Download latest MIDORI CO1 unique database from http://www.reference-midori.info/download.php# 
-# unzip the downloaded file and save it to the tax_root directory
-
-# Define paths for the template and the final output script
-blast_template_path <- here(scripts_root, "COI_E_Blast_template.sh")
-final_blast_script_path <- here(output_root, "run_blast.sh")
-
-# Read the template file
-blast_script_template <- readLines(blast_template_path)
-
-# BLAST CONFIGURATION (for HPC/SLURM)
-blast_account     <- "your_account_name"      # <-- IMPORTANT: User must change this
-blast_email       <- "your_email@domain.com"  # <-- IMPORTANT: User must change this
+# --- BLAST & LCA Parameters (for HPC/SLURM) ---
+blast_account     <- "your_account_name"      # SLURM account name
+blast_email       <- "your_email@domain.com"  # Email for job notifications
 blast_time        <- "01:00:00"               # Job run time (HH:MM:SS)
 blast_cpus        <- 10                       # Number of CPUs (must match threads)
 blast_mem         <- "4G"                     # Memory allocation (e.g., 4G, 8G)
 blast_db_name     <- "MIDORI2_UNIQ_NUC_GB267_CO1_BLAST" # Name of pre-formatted BLAST db on cluster
 blast_evalue      <- 1e-5                     # E-value cutoff for BLAST search
+lca_tid           <- 97                       # Taxonomy ID threshold for LCA
+lca_tcov          <- 90                       # Taxonomy coverage threshold for LCA
 
-# run these lines to replace placeholders in the template
+
+################################################################
+# (3) AUTOMATED SETUP - DO NOT EDIT BELOW THIS LINE
+################################################################
+
+# --- Define Directory and File Paths ---
+# Core directories
+input_root   <- here("eDNA", "inputs")
+scripts_root <- here("eDNA", "scripts")
+output_root  <- here("eDNA", "outputs", project_id)
+figures_root <- here("eDNA", "figures", project_id)
+tax_root     <- here("eDNA", "tax", tax_db)
+
+# Input paths
+metadata_path <- here(input_root, "metadata", metadata_file)
+trimmed_path  <- here(input_root, "trimmed", project_id, primer)
+
+# Output paths
+dada2_output            <- here(output_root, paste0(project_id, "_dada2.rds"))
+track_table_path        <- here(output_root, paste0(project_id, "_read_changes.txt"))
+nochim_output           <- here(output_root, paste0(project_id, "_nochim_transposed.rds"))
+nochim_csv              <- here(output_root, paste0(project_id, "_nochim.csv"))
+tax_table_path          <- here(output_root, paste0(project_id, "_taxtable.rds"))
+phyloseq_path           <- here(output_root, paste0(project_id, "_phyloseq.rds"))
+asv_seqs_path           <- here(output_root, paste0(project_id, "_ASV_sequences.rds"))
+asv_fasta_path          <- here(output_root, paste0(project_id, "_ASV_sequences.fasta"))
+clustered_phyloseq_path <- here(output_root, paste0(project_id, "_clustered_phyloseq.rds"))
+vsearch_fasta_path      <- here(output_root, paste0(project_id, "_otus.fasta"))
+vsearch_output_path     <- file.path(output_root, "match_list97.txt")
+curated_phyloseq_path   <- here(output_root, paste0(project_id, "_lulu_curated.rds"))
+curated_fasta_path      <- file.path(output_root, paste0(project_id, "_curated_otus.fasta"))
+blast_output_path       <- here(output_root, "blast_top10_hits.tsv")
+blast_template_path     <- here(scripts_root, "COI_E_Blast_template.sh")
+final_blast_script_path <- here(output_root, "run_blast.sh")
+lca_input_path          <- here(output_root, paste0(project_id, "_lca_input.txt"))
+lca_output_path         <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
+final_phyloseq_path     <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
+
+# --- Create Directories ---
+dir.create(output_root, showWarnings = FALSE, recursive = TRUE)
+dir.create(figures_root, showWarnings = FALSE, recursive = TRUE)
+
+
+################################################################
+# (4) PIPELINE EXECUTION
+################################################################
+
+## (A) INITIAL QUALITY ASSESSMENT ##
+# Purpose: Generate quality plots to determine trimming parameters.
+# Input:   Trimmed FASTQ files from `trimmed_path`.
+# Output:  Quality plot PNGs in the figures directory.
+source(file.path(scripts_root, "A_Quality_Assessment.R"))
+quality_data <- generate_quality_plots(pathinput = trimmed_path, pathfigures = figures_root)
+message("Quality plots generated. Please review them in the '", figures_root, "' directory to set 'trunc_params' in section (2).")
+
+
+## (B) INFER ASVs WITH DADA2 ##
+# Purpose: Filter, trim, and infer ASVs from sequence reads.
+# Input:   Raw sequence files and `trunc_params`.
+# Output:  ASV table (`seqtab_nochim`).
+source(file.path(scripts_root, "B_Infer_ASVs_DADA2.R"))
+dada2_results <- run_dada2_processing(
+  fnFs = quality_data$fnFs,
+  fnRs = quality_data$fnRs,
+  pathinput = trimmed_path,
+  pathoutput_tracktable = track_table_path,
+  pathfigures = figures_root,
+  trunc_params = trunc_params,
+  ncores = 8,
+  use_nova_seq = NOVA_seq,
+  use_coi_seqtab = COI_seqtab
+)
+seqtab_nochim <- dada2_results$seqtab_nochim
+saveRDS(seqtab_nochim, nochim_output) # Save the key output
+
+
+## (C) INITIAL TAXONOMY ASSIGNMENT (DADA2) ##
+# Purpose: Assign taxonomy for preliminary analysis and decontamination.
+# Input:   ASV table (`seqtab_nochim`).
+# Output:  Taxonomy table.
+source(file.path(scripts_root, "C_Assign_Taxonomy_DADA2.R"))
+tax_table <- assign_taxonomy(
+  seqtab_nochim = seqtab_nochim,
+  tax_db_path = tax_root,
+  output_path = tax_table_path,
+  ncores = 8,
+  seed = 119
+)
+
+
+## (D) CREATE INITIAL PHYLOSEQ OBJECT ##
+# Purpose: Combine ASV table, taxonomy, and metadata into a phyloseq object.
+# Input:   ASV table, taxonomy table, metadata.
+# Output:  Initial phyloseq object (`ps_initial`).
+source(file.path(scripts_root, "D_Phyloseq.R"))
+ps_initial <- create_phyloseq(
+  otu_table = seqtab_nochim,
+  tax_table = tax_table,
+  metadata_path = metadata_path,
+  output_path = phyloseq_path
+)
+
+
+################################################################
+# (5) MARKER-SPECIFIC STEPS: COI
+################################################################
+
+## (COI-A) DECONTAMINATION ##
+# Purpose: Remove contaminant sequences using decontam.
+# Input:   Initial phyloseq object.
+# Output:  Cleaned phyloseq object (`ps_clean`).
+source(file.path(scripts_root, "COI_A_Decontam.R"))
+decon_results <- run_COI_decontamination(
+  physeq = ps_initial,
+  output_dir = output_root,
+  project_id = project_id,
+  control_col = "sample_type",
+  neg_controls = c("extraction control", "field control", "pcr control"),
+  min_reads = decon_min_reads,
+  max_n_ratio = decon_max_n_ratio
+)
+ps_clean <- decon_results$phyloseq_clean
+
+
+## (COI-B) CLUSTER ASVs (DECIPHER) ##
+# Purpose: Cluster similar ASVs into OTUs (97% similarity).
+# Input:   Cleaned phyloseq object.
+# Output:  OTU-clustered phyloseq object (`ps_otu`).
+source(file.path(scripts_root, "COI_B_Cluster_ASVs.R"))
+ps_otu <- cluster_coi_asvs(
+  ps_object = ps_clean,
+  output_path = clustered_phyloseq_path,
+  cutoff = 0.03 # 97% similarity
+)
+
+
+## (COI-C) PREPARE FOR VSEARCH & LULU ##
+# Purpose: Create a FASTA file for VSEARCH.
+# Input:   OTU-clustered phyloseq object.
+# Output:  FASTA file of OTU representative sequences.
+source(file.path(scripts_root, "COI_C_Vsearch_Prep.R"))
+prepare_for_vsearch(ps_object = ps_otu, output_fasta_path = vsearch_fasta_path)
+message("\nACTION REQUIRED: Run VSEARCH in your terminal.")
+message("1. Navigate to the output directory: cd ", output_root)
+message("2. Run the command: vsearch --usearch_global ", basename(vsearch_fasta_path), " --db ", basename(vsearch_fasta_path), " --self --id 0.84 --iddef 1 --userout ", basename(vsearch_output_path), " --userfields query+target+id --maxaccepts 0 --query_cov 0.9 --maxhits 10")
+
+
+## (COI-D) CURATE OTUS WITH LULU ##
+# Purpose: Remove erroneous OTUs based on co-occurrence.
+# Input:   OTU-clustered phyloseq object and VSEARCH match list.
+# Output:  Lulu-curated phyloseq object (`ps_curated`).
+vsearch_matches <- read.table(vsearch_output_path, header = FALSE, col.names = c("OTUid", "hit", "match"))
+source(file.path(scripts_root, "COI_D_Lulu_Curation.R"))
+ps_curated <- curate_lulu(
+  ps_object = ps_otu,
+  matchlist_df = vsearch_matches,
+  output_path = curated_phyloseq_path
+)
+Biostrings::writeXStringSet(refseq(ps_curated), filepath = curated_fasta_path)
+
+
+## (COI-E) GENERATE BLAST SCRIPT ##
+# Purpose: Create a SLURM script to run BLAST on an HPC.
+# Input:   Curated OTU FASTA file and BLAST parameters.
+# Output:  A `run_blast.sh` script in the output directory.
+blast_script_template <- readLines(blast_template_path)
 blast_script_configured <- gsub("__ACCOUNT_NAME__", blast_account, blast_script_template)
 blast_script_configured <- gsub("__EMAIL__", blast_email, blast_script_configured)
 blast_script_configured <- gsub("__TIME__", blast_time, blast_script_configured)
@@ -386,62 +255,39 @@ blast_script_configured <- gsub("__DB_NAME__", blast_db_name, blast_script_confi
 blast_script_configured <- gsub("__EVALUE__", blast_evalue, blast_script_configured)
 blast_script_configured <- gsub("__QUERY_FILE__", curated_fasta_path, blast_script_configured)
 blast_script_configured <- gsub("__OUTPUT_FILE__", blast_output_path, blast_script_configured)
-
 writeLines(blast_script_configured, final_blast_script_path)
-
-# Make the script executable (for Unix-like systems)
 system(paste("chmod +x", final_blast_script_path))
+message("\nACTION REQUIRED: Run BLAST on your HPC.")
+message("1. Navigate to the output directory: cd ", output_root)
+message("2. Submit the job: sbatch ", basename(final_blast_script_path))
 
-# Instructions to run BLAST on HPC/SLURM
-message(paste("cd", output_root))
-message("sbatch run_blast.sh")
 
-## Curate LCA with galaxy tool ####
-# This step prepares the BLAST output for the galaxy-tool-lca and provides
-# instructions for running the python script to get the final taxonomic assignments.
-
-# Define paths for the LCA step
-lca_input_path <- here(output_root, paste0(project_id, "_lca_input.txt"))
-lca_output_path <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
-
-# Source the formatting script
+## (COI-F) PREPARE FOR GALAXY-LCA ##
+# Purpose: Format BLAST results for the galaxy-tool-lca script.
+# Input:   BLAST output table.
+# Output:  A formatted text file for the LCA tool.
 source(file.path(scripts_root, "COI_F_GalaxyLCA.R"))
-
-# Run the formatting function
 format_blast_for_lca(
   blast_output_path = blast_output_path,
   lca_input_path = lca_input_path,
   db_source_name = "MIDORI2_GB267"
 )
+message("\nACTION REQUIRED: Run galaxy-tool-lca in your terminal.")
+message("1. Navigate to your galaxy-tool-lca directory.")
+message("2. Run the command: python3 lca.py -i ", lca_input_path, " -o ", lca_output_path, " -b 8 -id 80 -cov 80 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
 
-# --- USER ACTION REQUIRED: Run galaxy-tool-lca in Terminal ---
-message("\nLCA input file has been created at: ", lca_input_path)
-message("Next, run the galaxy-tool-lca python script in your terminal.")
-message("Example command (run from the galaxy-tool-lca directory):")
-message(paste0(
-  "python3 lca.py -i ", lca_input_path, " -o ", lca_output_path,
-  " -b 8 -id 80 -cov 80 -t best_hits_range -tid 97 -tcov 90 -flh unknown"
-))
 
-## Create final phyloseq object ####
-
-## Create final phyloseq object ####
-# This step combines the curated OTU table with the final LCA-assigned taxonomy
-# to create the final, analysis-ready phyloseq object.
-
-# Define path for the final phyloseq object
-final_phyloseq_path <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
-
-# Source the final phyloseq creation script
+## (COI-G) CREATE FINAL PHYLOSEQ OBJECT ##
+# Purpose: Combine curated OTU table with final LCA taxonomy.
+# Input:   Lulu-curated phyloseq object and LCA taxonomy results.
+# Output:  The final, analysis-ready phyloseq object.
 source(file.path(scripts_root, "COI_G_FinalPhyloseq.R"))
-
-# Run the function to create and save the final object
 ps_final <- create_final_phyloseq(
   lca_output_path = lca_output_path,
   curated_phyloseq_path = curated_phyloseq_path,
   final_phyloseq_path = final_phyloseq_path
 )
-
-message("\nPipeline complete! The final phyloseq object is saved at: ", final_phyloseq_path)
+message("\nPIPELINE COMPLETE! The final phyloseq object is saved at: ", final_phyloseq_path)
 
 ## 12S (MiFish) #########################################################
+# (Future implementation)
