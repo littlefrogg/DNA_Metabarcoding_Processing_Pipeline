@@ -347,7 +347,6 @@ ps_curated <- curate_lulu(
 saveRDS(ps_curated, curated_phyloseq_path)
 # saved curated phyloseq object to curated_phyloseq_path
 
-
 # Extract and save curated sequences for BLAST ---
 # Get the DNA sequences from the curated phyloseq object
 curated_seqs <- refseq(ps_curated)
@@ -398,8 +397,51 @@ message(paste("cd", output_root))
 message("sbatch run_blast.sh")
 
 ## Curate LCA with galaxy tool ####
+# This step prepares the BLAST output for the galaxy-tool-lca and provides
+# instructions for running the python script to get the final taxonomic assignments.
 
+# Define paths for the LCA step
+lca_input_path <- here(output_root, paste0(project_id, "_lca_input.txt"))
+lca_output_path <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
+
+# Source the formatting script
+source(file.path(scripts_root, "COI_F_GalaxyLCA.R"))
+
+# Run the formatting function
+format_blast_for_lca(
+  blast_output_path = blast_output_path,
+  lca_input_path = lca_input_path,
+  db_source_name = "MIDORI2_GB267"
+)
+
+# --- USER ACTION REQUIRED: Run galaxy-tool-lca in Terminal ---
+message("\nLCA input file has been created at: ", lca_input_path)
+message("Next, run the galaxy-tool-lca python script in your terminal.")
+message("Example command (run from the galaxy-tool-lca directory):")
+message(paste0(
+  "python3 lca.py -i ", lca_input_path, " -o ", lca_output_path,
+  " -b 8 -id 80 -cov 80 -t best_hits_range -tid 97 -tcov 90 -flh unknown"
+))
 
 ## Create final phyloseq object ####
+
+## Create final phyloseq object ####
+# This step combines the curated OTU table with the final LCA-assigned taxonomy
+# to create the final, analysis-ready phyloseq object.
+
+# Define path for the final phyloseq object
+final_phyloseq_path <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
+
+# Source the final phyloseq creation script
+source(file.path(scripts_root, "COI_G_FinalPhyloseq.R"))
+
+# Run the function to create and save the final object
+ps_final <- create_final_phyloseq(
+  lca_output_path = lca_output_path,
+  curated_phyloseq_path = curated_phyloseq_path,
+  final_phyloseq_path = final_phyloseq_path
+)
+
+message("\nPipeline complete! The final phyloseq object is saved at: ", final_phyloseq_path)
 
 ## 12S (MiFish) #########################################################
