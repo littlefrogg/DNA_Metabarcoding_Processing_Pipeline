@@ -125,13 +125,20 @@ run_dada2_processing <- function(fnFs,
 
   # --- 7. Track Reads and Finalize Output ---
   getN <- function(x) sum(getUniques(x))
-  track <- cbind(
-    filter_stats[keep, ],
-    sapply(dadaFs[names(filtFs)], getN),
-    sapply(dadaRs[names(filtFs)], getN),
-    sapply(mergers[names(filtFs)], getN),
-    rowSums(seqtab_nochim[rownames(filter_stats[keep,]), ])
-  )
+  
+  # Start with the stats from the filtering step
+  track <- as.data.frame(filter_stats[keep, ])
+  
+  # Add columns one by one, matching by sample name
+  track$denoisedF <- sapply(names(filtFs), function(sn) getN(dadaFs[[sn]]))
+  track$denoisedR <- sapply(names(filtFs), function(sn) getN(dadaRs[[sn]]))
+  track$merged <- sapply(names(filtFs), function(sn) getN(mergers[[sn]]))
+  
+  # For the non-chimera counts, handle samples that might have dropped out
+  track$nonchim <- 0 # Default to 0
+  present_samples <- rownames(track)[rownames(track) %in% rownames(seqtab_nochim)]
+  track[present_samples, "nonchim"] <- rowSums(seqtab_nochim[present_samples, , drop = FALSE])
+
   colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
   
   # Save the tracking table

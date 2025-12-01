@@ -18,21 +18,18 @@
 # Author: Paige Smallman, 2025
 ################################################################
 
-assign_taxonomy <- function(
-    seqtab_nochim,
-    tax_db_path,
-    output_path,
-    ncores = TRUE,
-    seed = 119) {
-  
-# Load required packages
+assign_taxonomy <- function(seqtab_nochim,
+                            tax_db_path,
+                            output_path,
+                            ncores = TRUE,
+                            seed = 119) {
+
+  # --- 1. Load Packages and Validate Inputs ---
   suppressPackageStartupMessages({
     require(dada2)
   })
-  
-# INPUT VALIDATION
-  
-# Check that the taxonomy database file exists
+
+  # Check that the taxonomy database file exists
   if (!file.exists(tax_db_path)) {
     stop("Taxonomy database not found at: ", tax_db_path)
   }
@@ -40,24 +37,15 @@ assign_taxonomy <- function(
   if (!is.matrix(seqtab_nochim)) {
     stop("Input 'seqtab_nochim' is not a matrix. Please provide a valid ASV table.")
   }
-  
-# Create output directory
-dir.create(output_path, showWarnings = FALSE, recursive = TRUE)
-  
-# DATA LOADING
-  
-message("\nLoading chimera-free ASV table...")
-seqtab_nochim <- readRDS(seqtab_nochim)
-  
-# TAXONOMY ASSIGNMENT
 
-message("Assigning taxonomy using database: ", basename(tax_db_path))
+  # --- 2. Assign Taxonomy ---
+  message("\nAssigning taxonomy using database: ", basename(tax_db_path))
   
-# Set seed for reproducibility
-set.seed(seed)
+  # Set seed for reproducibility
+  set.seed(seed)
   
-# Time the execution for user feedback
-start_time <- Sys.time()
+  # Time the execution for user feedback
+  start_time <- Sys.time()
   
   tax_table <- assignTaxonomy(
     seqs = seqtab_nochim,
@@ -67,17 +55,16 @@ start_time <- Sys.time()
     verbose = TRUE
   )
   
-end_time <- Sys.time()
-message("Taxonomy assignment completed in ", 
-        round(difftime(end_time, start_time, units = "mins"), 1), 
-         " minutes.")
+  end_time <- Sys.time()
+  message("Taxonomy assignment completed in ", 
+          round(difftime(end_time, start_time, units = "mins"), 1), 
+          " minutes.")
   
-# OUTPUT GENERATION
- 
-# Save the final taxonomy table as an RDS object
-saveRDS(tax_table, file = output_path)
-message("Taxonomy table saved to: ", output_path)
+  # --- 3. Save Output and Return ---
+  # Save the final taxonomy table as an RDS object
+  saveRDS(tax_table, file = output_path)
+  message("Taxonomy table saved to: ", output_path)
   
-# Return the taxonomy table object to the main script
-return(tax_table)
+  # Return the taxonomy table object to the main script
+  return(tax_table)
 }

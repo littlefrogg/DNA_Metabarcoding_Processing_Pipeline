@@ -144,6 +144,7 @@ source(file.path(scripts_root, "B_Infer_ASVs_DADA2.R"))
 dada2_results <- run_dada2_processing(
   fnFs = quality_data$fnFs,
   fnRs = quality_data$fnRs,
+  sample.names = quality_data$sample.names, # <-- ADD THIS LINE
   pathinput = trimmed_path,
   pathoutput_tracktable = track_table_path,
   pathfigures = figures_root,
