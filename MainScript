@@ -87,11 +87,15 @@ lca_tcov          <- 90                       # Taxonomy coverage threshold for 
 
 # --- Define Directory and File Paths ---
 # Core directories
-input_root   <- here("eDNA", "inputs")
-scripts_root <- here("eDNA", "scripts")
-output_root  <- here("eDNA", "outputs", project_id)
-figures_root <- here("eDNA", "figures", project_id)
-tax_root     <- here("eDNA", "tax", tax_db)
+input_root   <- here("inputs")
+scripts_root <- here("scripts")
+output_root  <- here("outputs", project_id)
+figures_root <- here("figures", project_id)
+tax_root     <- here("tax", tax_db)
+
+# Add these new paths for intermediate R objects
+quality_data_path       <- here(output_root, paste0(project_id, "_quality_data.rds"))
+decontaminated_ps_path  <- here(output_root, paste0(project_id, "_decontaminated_phyloseq.rds"))
 
 # Input paths
 metadata_path <- here(input_root, "metadata", metadata_file)
@@ -133,6 +137,7 @@ dir.create(figures_root, showWarnings = FALSE, recursive = TRUE)
 # Output:  Quality plot PNGs in the figures directory.
 source(file.path(scripts_root, "A_Quality_Assessment.R"))
 quality_data <- generate_quality_plots(pathinput = trimmed_path, pathfigures = figures_root)
+saveRDS(quality_data, quality_data_path) # Save for resumability
 message("Quality plots generated. Please review them in the '", figures_root, "' directory to set 'trunc_params' in section (2).")
 
 
@@ -140,11 +145,15 @@ message("Quality plots generated. Please review them in the '", figures_root, "'
 # Purpose: Filter, trim, and infer ASVs from sequence reads.
 # Input:   Raw sequence files and `trunc_params`.
 # Output:  ASV table (`seqtab_nochim`).
+if (!exists("quality_data")) {
+  message("Resuming pipeline: Loading quality data from previous run...")
+  quality_data <- readRDS(quality_data_path)
+}
 source(file.path(scripts_root, "B_Infer_ASVs_DADA2.R"))
 dada2_results <- run_dada2_processing(
   fnFs = quality_data$fnFs,
   fnRs = quality_data$fnRs,
-  sample.names = quality_data$sample.names, # <-- ADD THIS LINE
+  sample.names = quality_data$sample.names,
   pathinput = trimmed_path,
   pathoutput_tracktable = track_table_path,
   pathfigures = figures_root,
@@ -161,6 +170,10 @@ saveRDS(seqtab_nochim, nochim_output) # Save the key output
 # Purpose: Assign taxonomy for preliminary analysis and decontamination.
 # Input:   ASV table (`seqtab_nochim`).
 # Output:  Taxonomy table.
+if (!exists("seqtab_nochim")) {
+  message("Resuming pipeline: Loading ASV table from previous run...")
+  seqtab_nochim <- readRDS(nochim_output)
+}
 source(file.path(scripts_root, "C_Assign_Taxonomy_DADA2.R"))
 tax_table <- assign_taxonomy(
   seqtab_nochim = seqtab_nochim,
@@ -175,6 +188,14 @@ tax_table <- assign_taxonomy(
 # Purpose: Combine ASV table, taxonomy, and metadata into a phyloseq object.
 # Input:   ASV table, taxonomy table, metadata.
 # Output:  Initial phyloseq object (`ps_initial`).
+if (!exists("seqtab_nochim")) {
+  message("Resuming pipeline: Loading ASV table from previous run...")
+  seqtab_nochim <- readRDS(nochim_output)
+}
+if (!exists("tax_table")) {
+  message("Resuming pipeline: Loading taxonomy table from previous run...")
+  tax_table <- readRDS(tax_table_path)
+}
 source(file.path(scripts_root, "D_Phyloseq.R"))
 ps_initial <- create_phyloseq(
   otu_table = seqtab_nochim,
@@ -192,6 +213,10 @@ ps_initial <- create_phyloseq(
 # Purpose: Remove contaminant sequences using decontam.
 # Input:   Initial phyloseq object.
 # Output:  Cleaned phyloseq object (`ps_clean`).
+if (!exists("ps_initial")) {
+  message("Resuming pipeline: Loading initial phyloseq object from previous run...")
+  ps_initial <- readRDS(phyloseq_path)
+}
 source(file.path(scripts_root, "COI_A_Decontam.R"))
 decon_results <- run_COI_decontamination(
   physeq = ps_initial,
@@ -203,12 +228,17 @@ decon_results <- run_COI_decontamination(
   max_n_ratio = decon_max_n_ratio
 )
 ps_clean <- decon_results$phyloseq_clean
+saveRDS(ps_clean, decontaminated_ps_path) # Save for resumability
 
 
 ## (COI-B) CLUSTER ASVs (DECIPHER) ##
 # Purpose: Cluster similar ASVs into OTUs (97% similarity).
 # Input:   Cleaned phyloseq object.
 # Output:  OTU-clustered phyloseq object (`ps_otu`).
+if (!exists("ps_clean")) {
+  message("Resuming pipeline: Loading decontaminated phyloseq object from previous run...")
+  ps_clean <- readRDS(decontaminated_ps_path)
+}
 source(file.path(scripts_root, "COI_B_Cluster_ASVs.R"))
 ps_otu <- cluster_coi_asvs(
   ps_object = ps_clean,
@@ -221,6 +251,10 @@ ps_otu <- cluster_coi_asvs(
 # Purpose: Create a FASTA file for VSEARCH.
 # Input:   OTU-clustered phyloseq object.
 # Output:  FASTA file of OTU representative sequences.
+if (!exists("ps_otu")) {
+  message("Resuming pipeline: Loading clustered phyloseq object from previous run...")
+  ps_otu <- readRDS(clustered_phyloseq_path)
+}
 source(file.path(scripts_root, "COI_C_Vsearch_Prep.R"))
 prepare_for_vsearch(ps_object = ps_otu, output_fasta_path = vsearch_fasta_path)
 message("\nACTION REQUIRED: Run VSEARCH in your terminal.")
@@ -232,6 +266,10 @@ message("2. Run the command: vsearch --usearch_global ", basename(vsearch_fasta_
 # Purpose: Remove erroneous OTUs based on co-occurrence.
 # Input:   OTU-clustered phyloseq object and VSEARCH match list.
 # Output:  Lulu-curated phyloseq object (`ps_curated`).
+if (!exists("ps_otu")) {
+  message("Resuming pipeline: Loading clustered phyloseq object from previous run...")
+  ps_otu <- readRDS(clustered_phyloseq_path)
+}
 vsearch_matches <- read.table(vsearch_output_path, header = FALSE, col.names = c("OTUid", "hit", "match"))
 source(file.path(scripts_root, "COI_D_Lulu_Curation.R"))
 ps_curated <- curate_lulu(
@@ -246,6 +284,11 @@ Biostrings::writeXStringSet(refseq(ps_curated), filepath = curated_fasta_path)
 # Purpose: Create a SLURM script to run BLAST on an HPC.
 # Input:   Curated OTU FASTA file and BLAST parameters.
 # Output:  A `run_blast.sh` script in the output directory.
+if (!exists("ps_curated")) {
+  message("Resuming pipeline: Loading curated phyloseq object from previous run...")
+  ps_curated <- readRDS(curated_phyloseq_path)
+  Biostrings::writeXStringSet(refseq(ps_curated), filepath = curated_fasta_path)
+}
 blast_script_template <- readLines(blast_template_path)
 blast_script_configured <- gsub("__ACCOUNT_NAME__", blast_account, blast_script_template)
 blast_script_configured <- gsub("__EMAIL__", blast_email, blast_script_configured)
