@@ -41,41 +41,43 @@ format_blast_for_lca <- function(blast_output_path, lca_input_path, db_source_na
 
   # Read BLAST output
   message("\nReading BLAST output from: ", blast_output_path)
-  blast_out <- read.delim(blast_output_path, header = FALSE, col.names = blast_cols)
+  tryCatch({
+    blast_out <- read.delim(blast_output_path, header = FALSE, col.names = blast_cols, quote = "")
+  }, error = function(e) {
+    stop("Error reading BLAST output: ", e$message)
+  })
+
 
   # --- 3. Reformat for Galaxy-LCA Tool ---
   # The LCA tool requires specific column headers and data structure.
   # This assumes the sseqid format is: "ACCESSION###Kingdom;Phylum;...;Species"
   message("Formatting data for the LCA tool...")
   lca_formatted <- blast_out %>%
-    # Split the subject ID into Accession and full Taxonomy string
     separate(sseqid, into = c("#Subject accession", "#Taxonomy"), sep = "###", remove = TRUE) %>%
-    # Clean up the taxonomy string for LCA tool compatibility
     mutate(
       `#Taxonomy` = str_replace_all(`#Taxonomy`, "root_1;", ""),
       `#Taxonomy` = str_replace_all(`#Taxonomy`, ";", " / ")
     ) %>%
-    # Extract the species name to create the '#Subject' column
     mutate(
       `#Subject` = str_extract(`#Taxonomy`, "(?<=/ )[^/]+$")
     ) %>%
-    # Extract the taxonomy ID from the subject accession (optional, but good practice)
     mutate(
       `#Subject Taxonomy ID` = str_extract(`#Subject accession`, "^[^.]+")
     ) %>%
-    # Add the database source
     mutate(
       `#Source` = db_source_name
     ) %>%
-    # Rename columns to match LCA tool requirements
-    rename(
-      `#Query ID` = qseqid,
-      `#Identity percentage` = pident,
-      `#Coverage` = qcovs,
-      `#evalue` = evalue,
-      `#bitscore` = bitscore
-    ) %>%
-    # Select and reorder columns to the final required format
+    { names(.) <- trimws(names(.)); . } %>%
+    {
+      nms <- names(.)
+      nms[nms == "qseqid"] <- "#Query ID"
+      nms[nms == "pident"] <- "#Identity percentage"
+      nms[nms == "qcovs"] <- "#Coverage"
+      nms[nms == "evalue"] <- "#evalue"
+      nms[nms == "bitscore"] <- "#bitscore"
+      names(.) <- nms
+      .
+    } %>%
     select(
       `#Query ID`,
       `#Subject`,

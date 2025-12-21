@@ -42,6 +42,9 @@ curate_lulu <- function(ps_object, matchlist_df, output_path) {
   if (taxa_are_rows(ps_object) == FALSE) {
     otu_table_lulu <- t(otu_table_lulu)
   }
+  
+  # LULU requires a data.frame with OTUs as rows
+  otu_table_lulu <- as.data.frame(otu_table_lulu)
 
   # Run the LULU curation algorithm
   message("\nStarting LULU curation...")

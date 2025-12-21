@@ -52,18 +52,18 @@ create_final_phyloseq <- function(lca_output_path,
   # Keep only the first unique assignment for each OTU and set rownames
   tax_final_df <- tax_lca %>%
     distinct(`#Query`, .keep_all = TRUE) %>%
-    column_to_rownames(var = "#Query")
+    tibble::column_to_rownames(var = "#Query")
 
   # Select and rename columns to standard taxonomic ranks
   tax_final_matrix <- tax_final_df %>%
     select(
-      Kingdom = kingdom,
-      Phylum = phylum,
-      Class = class,
-      Order = order,
-      Family = family,
-      Genus = genus,
-      Species = species
+      Kingdom = `#kingdom`,
+      Phylum = `#phylum`,
+      Class = `#class`,
+      Order = `#order`,
+      Family = `#family`,
+      Genus = `#genus`,
+      Species = `#species`
     ) %>%
     as.matrix()
 

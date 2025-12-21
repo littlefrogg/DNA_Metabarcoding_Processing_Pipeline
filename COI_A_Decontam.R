@@ -59,6 +59,9 @@ run_COI_decontamination <- function(physeq,
   message("\nApplying COI-specific pre-filters...")
   asv_seqs <- refseq(physeq)
   asv_seqs_all <- asv_seqs # Keep a copy of all original sequences for later
+  
+  # Debug: Print initial dimensions
+  message("DEBUG: Initial phyloseq dimensions: ", paste(dim(otu_table(physeq)), collapse = " x "))
 
   # Filter 1: Remove sequences with a high proportion of 'N' bases
   n_content <- letterFrequency(asv_seqs, "N", as.prob = TRUE)
@@ -77,6 +80,9 @@ run_COI_decontamination <- function(physeq,
   ps <- prune_taxa(keep_taxa_prefilter, physeq)
   asv_seqs <- refseq(ps) # Update asv_seqs to match the pruned object
   message(ntaxa(physeq) - ntaxa(ps), " ASVs removed by COI pre-filtering (N-content/frameshift).")
+  
+  # Debug: Print dimensions after pre-filtering
+  message("Dimensions after pre-filtering: ", paste(dim(otu_table(ps)), collapse = " x "))
 
   # --- 3. Identify Contaminants with Decontam ---
   message("\nIdentifying contaminants with decontam (prevalence method)...")
@@ -94,19 +100,45 @@ run_COI_decontamination <- function(physeq,
   safe_translate <- function(dna) {
     sapply(dna, function(s) {
       tryCatch({
-        as.character(Biostrings::translate(s))
+        # Use Invertebrate Mitochondrial Code (SGC5) to avoid false positives (e.g. TGA is Trp, not Stop)
+        as.character(Biostrings::translate(s, genetic.code = Biostrings::getGeneticCode("SGC5")))
       }, error = function(e) "")
     })
   }
   aa_seqs <- safe_translate(asv_seqs)
   has_stop <- grepl("\\*", aa_seqs)
+  
+  # Ensure vectors are named to match phyloseq taxa
+  names(gc_outliers) <- taxa_names(ps)
+  names(has_stop) <- taxa_names(ps)
 
   # Combine NUMT indicators and add to the contaminant dataframe
   numt_candidates <- gc_outliers | has_stop
-  contam_df$numt_candidate <- numt_candidates[rownames(contam_df)]
+  
+  # Initialize columns to avoid NA issues
+  contam_df$numt_candidate <- FALSE
+  if(all(rownames(contam_df) %in% names(numt_candidates))) {
+      contam_df$numt_candidate <- numt_candidates[rownames(contam_df)]
+  } else {
+      # Fallback: assume order matches if names don't (shouldn't happen)
+      contam_df$numt_candidate <- numt_candidates
+  }
+  
+  # Handle any NAs that might have crept in
+  contam_df$contaminant[is.na(contam_df$contaminant)] <- FALSE
+  contam_df$numt_candidate[is.na(contam_df$numt_candidate)] <- FALSE
   
   # Flag any ASV that is either a decontam contaminant OR a NUMT candidate for removal
   contam_df$remove <- contam_df$contaminant | contam_df$numt_candidate
+
+  # --- DEBUG: Print detailed removal stats ---
+  message("Decontam identified ", sum(contam_df$contaminant, na.rm=TRUE), " contaminants.")
+  message("NUMT check identified ", sum(contam_df$numt_candidate, na.rm=TRUE), " candidates.")
+  message("- GC outliers: ", sum(gc_outliers, na.rm=TRUE))
+  message("- Stop codons: ", sum(has_stop, na.rm=TRUE))
+  message("Total ASVs to remove: ", sum(contam_df$remove, na.rm=TRUE))
+  message("Total ASVs remaining: ", sum(!contam_df$remove, na.rm=TRUE))
+  # -------------------------------------------
 
   # --- 5. Generate Diagnostic Plots ---
   contam_plot_data <- data.frame(p = contam_df$p, Contaminant = contam_df$contaminant)
@@ -118,6 +150,36 @@ run_COI_decontamination <- function(physeq,
 
   # --- 6. Filter Phyloseq Object ---
   message("\nRemoving contaminants and NUMTs...")
+  
+  # Keep only taxa that are NOT marked for removal
+  keep_taxa_final <- rownames(contam_df)[!contam_df$remove]
+  
+  # Also remove manually specified taxa if any
+  if (!is.null(manual_remove_taxa)) {
+    keep_taxa_final <- setdiff(keep_taxa_final, manual_remove_taxa)
+  }
+  
+  if (length(keep_taxa_final) == 0) {
+      stop("DEBUG ERROR: All taxa were filtered out! Check the debug messages above to see which filter is too strict.")
+  }
+  
+  physeq_clean <- prune_taxa(keep_taxa_final, ps)
+  
+  # Debug: Print dimensions after contaminant removal
+  message("Dimensions after contaminant removal: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
+  
+  # Filter samples with low read counts
+  physeq_clean <- prune_samples(sample_sums(physeq_clean) >= min_reads, physeq_clean)
+  
+  # Debug: Print dimensions after sample filtering
+  message("Dimensions after sample filtering: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
+  
+  # Remove any taxa that are no longer present in any sample
+  physeq_clean <- prune_taxa(taxa_sums(physeq_clean) > 0, physeq_clean)
+  
+  # Debug: Print final dimensions
+  message("Final dimensions: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
+  
   taxa_to_keep <- rownames(contam_df[contam_df$remove == FALSE, ])
   ps_clean <- prune_taxa(taxa_to_keep, ps)
   message(nrow(contam_df) - length(taxa_to_keep), " ASVs removed as contaminants or NUMTs.")

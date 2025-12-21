@@ -69,10 +69,16 @@ create_phyloseq <- function(otu_table,
 
   # --- 4. Construct and Save Phyloseq Object ---
   message("\nConstructing phyloseq object...")
+  
+  # Extract sequences from row names of the OTU table
+  sequences <- Biostrings::DNAStringSet(rownames(otu_table_synced))
+  names(sequences) <- rownames(otu_table_synced)
+  
   ps <- phyloseq(
     otu_table(otu_table_synced, taxa_are_rows = TRUE),
     sample_data(metadata_synced),
-    tax_table(tax_table)
+    tax_table(tax_table),
+    refseq(sequences)
   )
 
   message("\nPhyloseq object created:")
