@@ -3,12 +3,15 @@
 ################################################################
 
 # COI TEST MAIN
-# Nov 29, 2025
+# Jan 29, 2025
 # R version 4.5
 
 ################################################################
 # (1) PACKAGE MANAGEMENT
 ################################################################
+
+# --- Set Working Directory ---
+setwd("your/path") # <-- CHANGE THIS to your project root directory
 
 # Load necessary libraries
 cran_packages <- c(
@@ -50,14 +53,14 @@ invisible(lapply(all_packages, function(pkg) library(pkg, character.only = TRUE)
 ################################################################
 
 # --- Project & File Settings ---
-project_id    <- "testCOI"
-primer        <- "COI"
-metadata_file <- "metadata_unique.csv"
-tax_db        <- "MIDORI2_UNIQ_NUC_GB267_CO1_DADA2.fasta"
+project_id    <- "COI_2020_21"          # <-- CHANGE THIS to your project name (used for directory and file naming)
+primer        <- "COI"                  # <-- CHANGE THIS to your primer name (used for directory and file naming)
+metadata_file <- "metadata_unique.csv"  # <-- CHANGE THIS to your metadata filename (in inputs/metadata/)
+tax_db        <- "MIDORI2_UNIQ_NUC_GB267_CO1_DADA2.fasta" # <-- CHANGE THIS to your taxonomy database filename (in tax/)
 
 # --- DADA2 Parameters (Review after Step A) ---
 trunc_params <- list(
-  truncLen = c(225, 215),  # Forward and Reverse read truncation length
+  truncLen = c(225, 220),  # Forward and Reverse read truncation length (set based on where green line in quality plots reaches ~30)
   maxEE = c(2, 2),         # Max expected errors
   truncQ = 2               # Truncate at first quality score < this value
 )
@@ -141,7 +144,7 @@ message("Quality plots generated. Please review them in the '", figures_root, "'
 
 ## (B) INFER ASVs WITH DADA2 ##
 # Purpose: Filter, trim, and infer ASVs from sequence reads.
-# Input:   Raw sequence files and `trunc_params`.
+# Input:   Raw sequence files and `trunc_params`. 
 # Output:  ASV table (`seqtab_nochim`).
 if (!exists("quality_data")) {
   message("Resuming pipeline: Loading quality data from previous run...")
@@ -157,7 +160,7 @@ dada2_results <- run_dada2_processing(
   pathfigures = figures_root,
   trunc_params = trunc_params,
   ncores = 8,
-  use_nova_seq = NOVA_seq,
+  use_nova_seq = NOVA_seq,       # remove this line if using standard error model for Illumina data instead of binned NovaSeq model
   use_coi_seqtab = COI_seqtab
 )
 seqtab_nochim <- dada2_results$seqtab_nochim
@@ -178,11 +181,10 @@ tax_table_dada <- assign_taxonomy(
   seqtab_nochim = seqtab_nochim,
   tax_db_path = tax_root,
   output_path = tax_table_path,
-  ncores = 8,
+  ncores = 32,
   seed = 119
 )
-#took about 15 hours to run on one core with 70GB on 10 samples
-
+# takes > 10 hours on 32 cores with 128G 
 
 ## (D) CREATE INITIAL PHYLOSEQ OBJECT ##
 # Purpose: Combine ASV table, taxonomy, and metadata into a phyloseq object.
@@ -207,7 +209,6 @@ ps_initial <- create_phyloseq(
   metadata_path = metadata_path,
   output_path = phyloseq_path
 )
-
 
 ################################################################
 # (5) MARKER-SPECIFIC STEPS: COI
@@ -323,7 +324,25 @@ format_blast_for_lca(
 )
 message("\nACTION REQUIRED: Run galaxy-tool-lca in your terminal.")
 message("1. Navigate to your galaxy-tool-lca directory.")
-message("2. Run the command: python3 lca.py -i ", lca_input_path, " -o ", lca_output_path, " -b 8 -id 80 -cov 80 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
+message("2. Run the command: module load python/3.13.2")
+message("3. Run the command: python lca.py -i ", lca_input_path, " -o ", lca_output_path, " -b 8 -id 80 -cov 80 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
+
+# Validation check for LCA output
+# outputs summary of ASVs processed and assigned taxonomy
+if (file.exists(lca_output_path)) {
+  message("\nCHECKPOINT: LCA output found.")
+  lca_data <- read.delim(lca_output_path, comment.char = "#", header = FALSE)
+  # Basic column names for counting (file usually has 13 cols but may vary by version)
+  # Column 2 is "lca rank", Column 3 is "lca taxon"
+  if(ncol(lca_data) >= 3) {
+      n_total_asvs <- nrow(lca_data)
+      n_identified <- sum(lca_data[,2] != "no identification")
+      message(sprintf("LCA Summary: %d total ASVs processed.", n_total_asvs))
+      message(sprintf("               %d ASVs (%.1f%%) received a taxonomy assignment.", n_identified, (n_identified/n_total_asvs)*100))
+  }
+} else {
+  message("\nWARNING: LCA output file NOT found yet. Please run the python command above before proceeding to Step (G).")
+}
 
 
 ## (COI-G) CREATE FINAL PHYLOSEQ OBJECT ##
@@ -336,7 +355,14 @@ ps_final <- create_final_phyloseq(
   curated_phyloseq_path = curated_phyloseq_path,
   final_phyloseq_path = final_phyloseq_path
 )
+saveRDS(ps_final, final_phyloseq_path)
 message("\nPIPELINE COMPLETE! The final phyloseq object is saved at: ", final_phyloseq_path)
+# can now proceed to MainScript_Plots.R for summary plots
 
-## 12S (MiFish) #########################################################
-# (Future implementation)
+################################################################
+# (5b) MARKER-SPECIFIC STEPS: MiFish 12S
+################################################################
+
+
+
+

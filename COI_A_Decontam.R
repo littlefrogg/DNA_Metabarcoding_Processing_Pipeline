@@ -82,7 +82,7 @@ run_COI_decontamination <- function(physeq,
   message(ntaxa(physeq) - ntaxa(ps), " ASVs removed by COI pre-filtering (N-content/frameshift).")
   
   # Debug: Print dimensions after pre-filtering
-  message("Dimensions after pre-filtering: ", paste(dim(otu_table(ps)), collapse = " x "))
+  message("DEBUG: Dimensions after pre-filtering: ", paste(dim(otu_table(ps)), collapse = " x "))
 
   # --- 3. Identify Contaminants with Decontam ---
   message("\nIdentifying contaminants with decontam (prevalence method)...")
@@ -132,12 +132,12 @@ run_COI_decontamination <- function(physeq,
   contam_df$remove <- contam_df$contaminant | contam_df$numt_candidate
 
   # --- DEBUG: Print detailed removal stats ---
-  message("Decontam identified ", sum(contam_df$contaminant, na.rm=TRUE), " contaminants.")
-  message("NUMT check identified ", sum(contam_df$numt_candidate, na.rm=TRUE), " candidates.")
-  message("- GC outliers: ", sum(gc_outliers, na.rm=TRUE))
-  message("- Stop codons: ", sum(has_stop, na.rm=TRUE))
-  message("Total ASVs to remove: ", sum(contam_df$remove, na.rm=TRUE))
-  message("Total ASVs remaining: ", sum(!contam_df$remove, na.rm=TRUE))
+  message("DEBUG: Decontam identified ", sum(contam_df$contaminant, na.rm=TRUE), " contaminants.")
+  message("DEBUG: NUMT check identified ", sum(contam_df$numt_candidate, na.rm=TRUE), " candidates.")
+  message("DEBUG:   - GC outliers: ", sum(gc_outliers, na.rm=TRUE))
+  message("DEBUG:   - Stop codons: ", sum(has_stop, na.rm=TRUE))
+  message("DEBUG: Total ASVs to remove: ", sum(contam_df$remove, na.rm=TRUE))
+  message("DEBUG: Total ASVs remaining: ", sum(!contam_df$remove, na.rm=TRUE))
   # -------------------------------------------
 
   # --- 5. Generate Diagnostic Plots ---
@@ -166,20 +166,19 @@ run_COI_decontamination <- function(physeq,
   physeq_clean <- prune_taxa(keep_taxa_final, ps)
   
   # Debug: Print dimensions after contaminant removal
-  message("Dimensions after contaminant removal: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
+  message("DEBUG: Dimensions after contaminant removal: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
   
   # Filter samples with low read counts
   physeq_clean <- prune_samples(sample_sums(physeq_clean) >= min_reads, physeq_clean)
   
   # Debug: Print dimensions after sample filtering
-  message("Dimensions after sample filtering: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
+  message("DEBUG: Dimensions after sample filtering: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
   
   # Remove any taxa that are no longer present in any sample
   physeq_clean <- prune_taxa(taxa_sums(physeq_clean) > 0, physeq_clean)
   
   # Debug: Print final dimensions
-  message("Final dimensions: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
-  
+  message("DEBUG: Final dimensions: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
   taxa_to_keep <- rownames(contam_df[contam_df$remove == FALSE, ])
   ps_clean <- prune_taxa(taxa_to_keep, ps)
   message(nrow(contam_df) - length(taxa_to_keep), " ASVs removed as contaminants or NUMTs.")

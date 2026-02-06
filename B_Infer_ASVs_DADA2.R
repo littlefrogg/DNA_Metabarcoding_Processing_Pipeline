@@ -54,6 +54,35 @@ run_dada2_processing <- function(fnFs,
   message("\nStarting DADA2 processing with parameters:")
   message(paste(capture.output(print(trunc_params)), collapse = "\n"))
 
+  # Verify files exist and are not empty
+  # This filtering prevents parallel processing crashes on empty/tiny files (<25KB ~50 lines)
+  min_file_size <- 25000
+  size_check_passed <- file.size(fnFs) >= min_file_size & file.size(fnRs) >= min_file_size
+
+  # Diagnostic: print and save raw file sizes for inspection
+  raw_sizes <- data.frame(
+    sample = sample.names,
+    fnF = fnFs,
+    fnR = fnRs,
+    size_F = file.size(fnFs),
+    size_R = file.size(fnRs),
+    pass_size_filter = size_check_passed
+  )
+  message("\nRaw file size summary (first 10 shown):")
+  print(head(raw_sizes, 10))
+  write.csv(raw_sizes, file.path(pathinput, "filtered", "raw_file_size_summary.csv"), row.names = FALSE)
+
+  if (any(!size_check_passed)) {
+    dropped <- sample.names[!size_check_passed]
+    message("\nWARNING: Excluding ", length(dropped), " samples with file size < ", min_file_size, " bytes (too few reads to process).")
+    message("Excluded samples: ", paste(dropped, collapse = ", "))
+    # Update vectors to keep only passed files
+    fnFs <- fnFs[size_check_passed]
+    fnRs <- fnRs[size_check_passed]
+    sample.names <- sample.names[size_check_passed]
+    if(length(fnFs) == 0) stop("No valid samples remained after filtering for minimum file size!")
+  }
+
   # --- 2. Filter and Trim Reads ---
   # Define paths for filtered output files
   filtFs <- file.path(filtered_path, paste0(sample.names, "_F_filt.fastq.gz"))
@@ -73,15 +102,52 @@ run_dada2_processing <- function(fnFs,
     multithread = ncores
   )
 
-  # Remove any samples that had zero reads pass filtering
+  # Diagnostic: print and save filter stats for inspection
+  filter_stats_df <- as.data.frame(filter_stats)
+  filter_stats_df$sample <- sample.names
+  filter_stats_df$fnF <- filtFs
+  filter_stats_df$fnR <- filtRs
+  message("\nFilter stats summary (first 10 shown):")
+  print(head(filter_stats_df, 10))
+  write.csv(filter_stats_df, file.path(filtered_path, "filter_stats_summary.csv"), row.names = FALSE)
+
+
+  # Remove any samples that had zero reads pass filtering or resulted in near-empty files
   keep <- file.exists(filtFs) & file.exists(filtRs)
+  if (any(!keep)) {
+    message("\nWARNING: Excluding ", sum(!keep), " samples with missing filtered files.")
+  }
   filtFs <- filtFs[keep]
   filtRs <- filtRs[keep]
+  sample.names <- sample.names[keep]
+  filter_stats <- filter_stats[keep, , drop=FALSE]
+  
   if (length(filtFs) == 0) {
     stop("No samples remaining after filtering. Check input files and parameters.")
   }
 
+  # Check for files that ended up with 0 reads after filtering (very small gzipped files)
+  min_filtered_size <- 50000
+  valid_indices <- file.size(filtFs) > min_filtered_size & file.size(filtRs) > min_filtered_size
+  if (any(!valid_indices)) {
+    dropped_final <- sample.names[!valid_indices]
+    message("\nWARNING: Additional ", length(dropped_final), " samples dropped after quality filtering resulted in near-empty files.")
+    message("Dropped post-filter: ", paste(dropped_final, collapse=", "))
+    filtFs <- filtFs[valid_indices]
+    filtRs <- filtRs[valid_indices]
+    sample.names <- sample.names[valid_indices]
+    filter_stats <- filter_stats[valid_indices, , drop=FALSE]
+  }
+
+  # Print vector lengths for debugging
+  message(sprintf("\nSamples after filtering: %d", length(sample.names)))
+  message(sprintf("filtFs: %d, filtRs: %d, filter_stats rows: %d", length(filtFs), length(filtRs), nrow(filter_stats)))
+  if (!(length(filtFs) == length(filtRs) && length(filtFs) == length(sample.names) && length(filtFs) == nrow(filter_stats))) {
+    stop("Vector length mismatch after filtering! Please check filtering logic.")
+  }
+
   # --- 3. Learn Error Rates ---
+
   message("\nLearning error models...")
   if (use_nova_seq) {
     message("Using error model for binned NovaSeq quality scores.")
@@ -127,7 +193,7 @@ run_dada2_processing <- function(fnFs,
   getN <- function(x) sum(getUniques(x))
   
   # Start with the stats from the filtering step
-  track <- as.data.frame(filter_stats[keep, ])
+  track <- as.data.frame(filter_stats)
   
   # Add columns one by one, matching by sample name
   track$denoisedF <- sapply(names(filtFs), function(sn) getN(dadaFs[[sn]]))

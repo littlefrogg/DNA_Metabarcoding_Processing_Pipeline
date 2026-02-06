@@ -106,4 +106,3 @@ cluster_coi_asvs <- function(ps_object,
 
   return(ps_otu)
 }
-

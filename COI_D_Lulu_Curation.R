@@ -43,6 +43,10 @@ curate_lulu <- function(ps_object, matchlist_df, output_path) {
     otu_table_lulu <- t(otu_table_lulu)
   }
   
+  # DEBUG: Print dimensions and class
+  message("DEBUG: otu_table_lulu dimensions: ", paste(dim(otu_table_lulu), collapse = " x "))
+  message("DEBUG: otu_table_lulu class: ", class(otu_table_lulu)[1])
+  
   # LULU requires a data.frame with OTUs as rows
   otu_table_lulu <- as.data.frame(otu_table_lulu)
 
