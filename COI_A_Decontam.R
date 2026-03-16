@@ -163,11 +163,31 @@ run_COI_decontamination <- function(physeq,
       stop("DEBUG ERROR: All taxa were filtered out! Check the debug messages above to see which filter is too strict.")
   }
   
+  # After contaminant removal
   physeq_clean <- prune_taxa(keep_taxa_final, ps)
+
+  # Remove samples with zero counts
+  physeq_clean <- prune_samples(sample_sums(physeq_clean) > 0, physeq_clean)
+  # Remove ASVs with zero counts
+  physeq_clean <- prune_taxa(taxa_sums(physeq_clean) > 0, physeq_clean)
+
+  # Debug: Print dimensions after pruning
+  message("DEBUG: Dimensions after zero-count pruning: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
+
+  # Debug: Check for any zero-count samples or ASVs remaining
+zero_samples <- which(sample_sums(physeq_clean) == 0)
+zero_asvs <- which(taxa_sums(physeq_clean) == 0)
+message("Zero-count samples:", paste(zero_samples, collapse=", "))
+message("Zero-count ASVs:", paste(zero_asvs, collapse=", "))
   
-  # Debug: Print dimensions after contaminant removal
-  message("DEBUG: Dimensions after contaminant removal: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))
-  
+otu_mat <- as.matrix(otu_table(physeq_clean))
+message("Any NA values: ", any(is.na(otu_mat)))
+message("Any NaN values: ", any(is.nan(otu_mat)))
+message("Any Inf values: ", any(is.infinite(otu_mat)))
+message("OTU table is numeric: ", is.numeric(otu_mat))
+message("Any negative values: ", any(otu_mat < 0))
+message("Dimensions of OTU table: ", paste(dim(otu_mat), collapse = " x "))
+
   # Filter samples with low read counts
   physeq_clean <- prune_samples(sample_sums(physeq_clean) >= min_reads, physeq_clean)
   
@@ -176,6 +196,7 @@ run_COI_decontamination <- function(physeq,
   
   # Remove any taxa that are no longer present in any sample
   physeq_clean <- prune_taxa(taxa_sums(physeq_clean) > 0, physeq_clean)
+
   
   # Debug: Print final dimensions
   message("DEBUG: Final dimensions: ", paste(dim(otu_table(physeq_clean)), collapse = " x "))

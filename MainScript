@@ -68,7 +68,8 @@ COI_seqtab <- TRUE # TRUE to filter seq table by length 310–316 bp for COI
 NOVA_seq   <- TRUE # TRUE if data is from NovaSeq (to handle binned quality scores)
 
 # --- Decontamination Parameters ---
-decon_min_reads   <- 300   # Min reads for a sample to be considered in prevalence check
+#decon_min_reads   <- 300   # Min reads for a sample to be considered in prevalence check
+decon_min_reads   <- 1   # Min reads for a sample to be considered in prevalence check
 decon_max_n_ratio <- 0.001 # Max ratio of 'N' bases allowed in a sequence (stricter for COI)
 
 # --- BLAST & LCA Parameters (for HPC/SLURM) ---
@@ -116,17 +117,22 @@ vsearch_fasta_path      <- here(output_root, paste0(project_id, "_otus.fasta"))
 vsearch_output_path     <- file.path(output_root, "match_list97.txt")
 curated_phyloseq_path   <- here(output_root, paste0(project_id, "_lulu_curated.rds"))
 curated_fasta_path      <- file.path(output_root, paste0(project_id, "_curated_otus.fasta"))
-blast_output_path       <- here(output_root, "blast_top10_hits.tsv")
+# blast_output_path       <- here(output_root, "blast_top10_hits.tsv")
+alt_blast_output_path       <- here(output_root, "blast_alt_results-best-shared_Step4.tsv")
 blast_template_path     <- here(scripts_root, "COI_E_Blast.sh")
 final_blast_script_path <- here(output_root, "run_blast.sh")
 lca_input_path          <- here(output_root, paste0(project_id, "_lca_input.txt"))
 lca_output_path         <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
 final_phyloseq_path     <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
+alternative_blast_template_path <- here(scripts_root, "COI_E_Blast_Alt.sh")
+final_blast_alt_script_path <- here(output_root, "run_blast_alt.sh")
+alt_lca_input_path          <- here(output_root, paste0(project_id, "_alt_lca_input.txt"))
+alt_lca_output_path         <- here(output_root, paste0(project_id, "_alt_lca_assigned_taxonomy.txt"))
+alt_final_phyloseq_path     <- here(output_root, paste0(project_id, "_alt_final_phyloseq.rds"))
 
 # --- Create Directories ---
 #dir.create(output_root, showWarnings = FALSE, recursive = TRUE)
 #dir.create(figures_root, showWarnings = FALSE, recursive = TRUE)
-
 
 ################################################################
 # (4) PIPELINE EXECUTION
@@ -184,7 +190,9 @@ tax_table_dada <- assign_taxonomy(
   ncores = 32,
   seed = 119
 )
-# takes > 10 hours on 32 cores with 128G 
+
+#took about 15 hours to run on one core with 70GB on 7 samples
+# 11 hours on 32 cores with 128G 
 
 ## (D) CREATE INITIAL PHYLOSEQ OBJECT ##
 # Purpose: Combine ASV table, taxonomy, and metadata into a phyloseq object.
@@ -201,10 +209,12 @@ if (!exists("tax_table_dada")) {
 source(file.path(scripts_root, "D_Phyloseq.R"))
 # Clean sample names in seqtab_nochim to match metadata (remove suffixes like _S1566_L002...)
 # This ensures sample names match the "MLxxxxx" format in the metadata
-rownames(seqtab_nochim) <- sub("_.*", "", rownames(seqtab_nochim))
+rownames(seqtab_nochim) <- sub("-.*", "", rownames(seqtab_nochim))
+m_seqtab_nochim <- as.matrix(seqtab_nochim) # convert to matrix
+t_seqtab_nochim <- t(m_seqtab_nochim) # Transpose
 
 ps_initial <- create_phyloseq(
-  otu_table = as.matrix(t(seqtab_nochim)),
+  otu_table = t_seqtab_nochim,
   tax_table = as.matrix(tax_table_dada),
   metadata_path = metadata_path,
   output_path = phyloseq_path
@@ -286,64 +296,104 @@ ps_curated <- curate_lulu(
 Biostrings::writeXStringSet(refseq(ps_curated), filepath = curated_fasta_path)
 
 
-## (COI-E) GENERATE BLAST SCRIPT ##
+## (COI-E) Generate Alternative BLAST script for input into STRI shiny app https://shiny.si.edu/ebbs_blast_filter ##
 # Purpose: Create a SLURM script to run BLAST on an HPC.
 # Input:   Curated OTU FASTA file and BLAST parameters.
-# Output:  A `run_blast.sh` script in the output directory.
+# Output:  A `run_blast_alt.sh` script in the output directory.
 if (!exists("ps_curated")) {
   message("Resuming pipeline: Loading curated phyloseq object from previous run...")
   ps_curated <- readRDS(curated_phyloseq_path)
   Biostrings::writeXStringSet(refseq(ps_curated), filepath = curated_fasta_path)
 }
-blast_script_template <- readLines(blast_template_path)
-blast_script_configured <- gsub("__ACCOUNT_NAME__", blast_account, blast_script_template)
-blast_script_configured <- gsub("__EMAIL__", blast_email, blast_script_configured)
-blast_script_configured <- gsub("__TIME__", blast_time, blast_script_configured)
-blast_script_configured <- gsub("__CPUS__", blast_cpus, blast_script_configured)
-blast_script_configured <- gsub("__MEM__", blast_mem, blast_script_configured)
-blast_script_configured <- gsub("__DB_NAME__", here("tax", blast_db_name), blast_script_configured)
-blast_script_configured <- gsub("__EVALUE__", blast_evalue, blast_script_configured)
-blast_script_configured <- gsub("__QUERY_FILE__", curated_fasta_path, blast_script_configured)
-blast_script_configured <- gsub("__OUTPUT_FILE__", blast_output_path, blast_script_configured)
-writeLines(blast_script_configured, final_blast_script_path)
-system(paste("chmod +x", final_blast_script_path))
-message("\nACTION REQUIRED: Run BLAST on your HPC.")
+alt_blast_max_target_seqs <- 50 # You can change this value as needed
+alt_blast_evalue <- 10 # You can change this value as needed
+alt_blast_output_path <- here(output_root, "blast_alt_results.tsv")
+alt_blast_template <- readLines(alternative_blast_template_path)
+alt_blast_header <- c(
+  "#!/bin/bash",
+  "#SBATCH --account=def-barrett",
+  "#SBATCH --time=04:00:00",
+  "#SBATCH --cpus-per-task=10",
+  "#SBATCH --mem=4G",
+  "#SBATCH --job-name=blastn_alt",
+  "#SBATCH --output=blastn_alt_%j.out",
+  "#SBATCH --error=blastn_alt_%j.err",
+  "#SBATCH --mail-user=paige.smallman@mail.mcgill.ca",
+  "#SBATCH --mail-type=END,FAIL",
+  "",
+  "module load blast+/2.17.0",
+  "",
+  "echo \"Running alternative BLASTn...\""
+)
+alt_blast_script_configured <- gsub("__ACCOUNT_NAME__", blast_account, alt_blast_template)
+alt_blast_script_configured <- gsub("__EMAIL__", blast_email, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__TIME__", blast_time, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__CPUS__", blast_cpus, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__MEM__", blast_mem, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__DB_NAME__", here("tax", blast_db_name), alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__EVALUE__", alt_blast_evalue, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__QUERY_FILE__", curated_fasta_path, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__OUTPUT_FILE__", alt_blast_output_path, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__MAX_TARGET_SEQS__", alt_blast_max_target_seqs, alt_blast_script_configured)
+writeLines(c(alt_blast_header, alt_blast_script_configured), final_blast_alt_script_path)
+system(paste("chmod +x", final_blast_alt_script_path))
+message("\nALTERNATIVE BLAST OPTION: Run BLAST with custom output columns.")
 message("1. Navigate to the output directory: cd ", output_root)
-message("2. Submit the job: sbatch ", basename(final_blast_script_path))
-
+message("2. Submit the job: sbatch ", basename(final_blast_alt_script_path))
+message("This alternative BLAST output can be used for input into the STRI shiny app: https://shiny.si.edu/ebbs_blast_filter/") 
+# shiny app used with default step 2; best-shared step 3; optimized thresholds and 5% error rate for step 4
+# outputs .tsv file
 
 ## (COI-F) PREPARE FOR GALAXY-LCA ##
 # Purpose: Format BLAST results for the galaxy-tool-lca script.
 # Input:   BLAST output table.
 # Output:  A formatted text file for the LCA tool.
-source(file.path(scripts_root, "COI_F_GalaxyLCA.R"))
+
+# source(file.path(scripts_root, "COI_F_GalaxyLCA.R"))
+source(file.path(scripts_root, "COI_F_Alt_GalaxyLCA.R"))
 format_blast_for_lca(
-  blast_output_path = blast_output_path,
-  lca_input_path = lca_input_path,
+  #blast_output_path = blast_output_path,
+  #lca_input_path = lca_input_path,
+  blast_output_path = alt_blast_output_path,
+  lca_input_path = alt_lca_input_path,
   db_source_name = "MIDORI2_GB267"
 )
 message("\nACTION REQUIRED: Run galaxy-tool-lca in your terminal.")
 message("1. Navigate to your galaxy-tool-lca directory.")
 message("2. Run the command: module load python/3.13.2")
-message("3. Run the command: python lca.py -i ", lca_input_path, " -o ", lca_output_path, " -b 8 -id 80 -cov 80 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
+lca_input_path          <- here(output_root, paste0(project_id, "_lca_input.txt"))
+lca_output_path         <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
+final_phyloseq_path     <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
+# message("3. Run the command: python lca.py -i ", lca_input_path, " -o ", lca_output_path, " -b 8 -id 80 -cov 80 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
+message("3. Run the command: python lca.py -i ", alt_lca_input_path, " -o ", alt_lca_output_path, " -b 8 -id 70 -cov 70 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
 
 # Validation check for LCA output
 # outputs summary of ASVs processed and assigned taxonomy
-if (file.exists(lca_output_path)) {
-  message("\nCHECKPOINT: LCA output found.")
-  lca_data <- read.delim(lca_output_path, comment.char = "#", header = FALSE)
-  # Basic column names for counting (file usually has 13 cols but may vary by version)
-  # Column 2 is "lca rank", Column 3 is "lca taxon"
-  if(ncol(lca_data) >= 3) {
-      n_total_asvs <- nrow(lca_data)
-      n_identified <- sum(lca_data[,2] != "no identification")
-      message(sprintf("LCA Summary: %d total ASVs processed.", n_total_asvs))
-      message(sprintf("               %d ASVs (%.1f%%) received a taxonomy assignment.", n_identified, (n_identified/n_total_asvs)*100))
+if (file.exists(alt_lca_output_path)) {
+  message("\nCHECKPOINT: Alternative LCA output found.")
+  lca_data <- read.delim(alt_lca_output_path, comment.char = "#", header = FALSE)
+  colnames(lca_data) <- c("#Query", "#lca rank", "#lca taxon", "#kingdom", "#phylum", "#class", "#order", "#family", "#genus", "#species", "#method", "#identity", "#coverage")
+  # Try to use column names for robustness
+  lca_rank_col <- NULL
+  possible_rank_names <- c("lca_rank", "LCA_Rank", "rank", "LCA_RANK", "#lca rank", "#lca rank ")
+  for (col in possible_rank_names) {
+    if (col %in% colnames(lca_data)) {
+      lca_rank_col <- col
+      break
+    }
+  }
+  if (!is.null(lca_rank_col)) {
+    n_total_asvs <- nrow(lca_data)
+    n_identified <- sum(!is.na(lca_data[[lca_rank_col]]) & lca_data[[lca_rank_col]] != "no identification")
+    message(sprintf("LCA Summary: %d total ASVs processed.", n_total_asvs))
+    message(sprintf("               %d ASVs (%.1f%%) received a taxonomy assignment.", n_identified, (n_identified/n_total_asvs)*100))
+  } else {
+    warning("LCA output does not have an expected 'lca_rank' column. Please check the output format. Column names are:")
+    print(colnames(lca_data))
   }
 } else {
-  message("\nWARNING: LCA output file NOT found yet. Please run the python command above before proceeding to Step (G).")
+  message("\nWARNING: Alternative LCA output file NOT found yet. Please run the python command above before proceeding to Step (G).")
 }
-
 
 ## (COI-G) CREATE FINAL PHYLOSEQ OBJECT ##
 # Purpose: Combine curated OTU table with final LCA taxonomy.
@@ -351,18 +401,20 @@ if (file.exists(lca_output_path)) {
 # Output:  The final, analysis-ready phyloseq object.
 source(file.path(scripts_root, "COI_G_FinalPhyloseq.R"))
 ps_final <- create_final_phyloseq(
-  lca_output_path = lca_output_path,
+  #lca_output_path = lca_output_path,
+  lca_output_path = alt_lca_output_path,
   curated_phyloseq_path = curated_phyloseq_path,
-  final_phyloseq_path = final_phyloseq_path
+  #final_phyloseq_path = final_phyloseq_path
+  final_phyloseq_path = alt_final_phyloseq_path
 )
-saveRDS(ps_final, final_phyloseq_path)
-message("\nPIPELINE COMPLETE! The final phyloseq object is saved at: ", final_phyloseq_path)
+# saveRDS(ps_final, final_phyloseq_path)
+saveRDS(ps_final, alt_final_phyloseq_path)
+# message("\nPIPELINE COMPLETE! The final phyloseq object is saved at: ", final_phyloseq_path)
+message("\nPIPELINE COMPLETE! The alternative final phyloseq object is saved at: ", alt_final_phyloseq_path)
 # can now proceed to MainScript_Plots.R for summary plots
 
 ################################################################
 # (5b) MARKER-SPECIFIC STEPS: MiFish 12S
 ################################################################
-
-
 
 
