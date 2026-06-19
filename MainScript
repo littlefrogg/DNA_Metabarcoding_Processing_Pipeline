@@ -11,7 +11,7 @@
 ################################################################
 
 # --- Set Working Directory ---
-setwd("your/path") # <-- CHANGE THIS to your project root directory
+setwd("your/path") # <-- CHANGE to your project root directory
 
 # Load necessary libraries
 cran_packages <- c(
