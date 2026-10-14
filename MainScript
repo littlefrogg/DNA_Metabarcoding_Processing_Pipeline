@@ -80,6 +80,8 @@ blast_cpus        <- 10                       # Number of CPUs (must match threa
 blast_mem         <- "4G"                     # Memory allocation (e.g., 4G, 8G)
 blast_db_name     <- "MIDORI2_UNIQ_NUC_GB267_CO1_BLAST" # Name of pre-formatted BLAST db on cluster
 blast_evalue      <- 1e-5                     # E-value cutoff for BLAST search
+run_coi_branch    <- TRUE                    # Set TRUE only when running the COI workflow
+
 lca_tid           <- 97                       # Taxonomy ID threshold for LCA
 lca_tcov          <- 90                       # Taxonomy coverage threshold for LCA
 
@@ -117,14 +119,17 @@ vsearch_fasta_path      <- here(output_root, paste0(project_id, "_otus.fasta"))
 vsearch_output_path     <- file.path(output_root, "match_list97.txt")
 curated_phyloseq_path   <- here(output_root, paste0(project_id, "_lulu_curated.rds"))
 curated_fasta_path      <- file.path(output_root, paste0(project_id, "_curated_otus.fasta"))
-# blast_output_path       <- here(output_root, "blast_top10_hits.tsv")
+mifish_query_fasta      <- file.path(output_root, paste0(project_id, "_mifish_clean_asvs.fasta"))
 alt_blast_output_path       <- here(output_root, "blast_alt_results-best-shared_Step4.tsv")
+mifish_blast_output_path    <- here(output_root, "blast_results.tsv")
+mifish_lca_input_path       <- here(output_root, paste0(project_id, "_lca_input.txt"))
+mifish_lca_output_path      <- here(output_root, paste0(project_id, "_assigned_taxonomy.txt"))
+mifish_final_phyloseq_path  <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
+mifish_blast_script_path    <- here(output_root, "run_blast_mifish.sh")
 blast_template_path     <- here(scripts_root, "COI_E_Blast.sh")
 final_blast_script_path <- here(output_root, "run_blast.sh")
-lca_input_path          <- here(output_root, paste0(project_id, "_lca_input.txt"))
-lca_output_path         <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
-final_phyloseq_path     <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
 alternative_blast_template_path <- here(scripts_root, "COI_E_Blast_Alt.sh")
+mifish_blast_template_path <- here(scripts_root, "MiFish_B_Blast.sh")
 final_blast_alt_script_path <- here(output_root, "run_blast_alt.sh")
 alt_lca_input_path          <- here(output_root, paste0(project_id, "_alt_lca_input.txt"))
 alt_lca_output_path         <- here(output_root, paste0(project_id, "_alt_lca_assigned_taxonomy.txt"))
@@ -165,9 +170,9 @@ dada2_results <- run_dada2_processing(
   pathoutput_tracktable = track_table_path,
   pathfigures = figures_root,
   trunc_params = trunc_params,
-  ncores = 8,
-  use_nova_seq = NOVA_seq,       # remove this line if using standard error model for Illumina data instead of binned NovaSeq model
-  use_coi_seqtab = COI_seqtab
+  ncores = 8
+  #use_nova_seq = NOVA_seq,       # remove this line if using standard error model for Illumina data instead of binned NovaSeq model
+  #use_coi_seqtab = COI_seqtab
 )
 seqtab_nochim <- dada2_results$seqtab_nochim
 saveRDS(seqtab_nochim, nochim_output) # Save the key output
@@ -177,6 +182,8 @@ saveRDS(seqtab_nochim, nochim_output) # Save the key output
 # Purpose: Assign taxonomy for preliminary analysis and decontamination.
 # Input:   ASV table (`seqtab_nochim`).
 # Output:  Taxonomy table.
+
+# use Dada_tax.sh and Dada_tax.R to run step C in the cluster (this step can take many hours)
 if (!exists("seqtab_nochim")) {
   message("Resuming pipeline: Loading ASV table from previous run...")
   seqtab_nochim <- readRDS(nochim_output)
@@ -190,9 +197,6 @@ tax_table_dada <- assign_taxonomy(
   ncores = 32,
   seed = 119
 )
-
-#took about 15 hours to run on one core with 70GB on 7 samples
-# 11 hours on 32 cores with 128G 
 
 ## (D) CREATE INITIAL PHYLOSEQ OBJECT ##
 # Purpose: Combine ASV table, taxonomy, and metadata into a phyloseq object.
@@ -209,6 +213,7 @@ if (!exists("tax_table_dada")) {
 source(file.path(scripts_root, "D_Phyloseq.R"))
 # Clean sample names in seqtab_nochim to match metadata (remove suffixes like _S1566_L002...)
 # This ensures sample names match the "MLxxxxx" format in the metadata
+rownames(seqtab_nochim) <- sub("_.*", "", rownames(seqtab_nochim))
 rownames(seqtab_nochim) <- sub("-.*", "", rownames(seqtab_nochim))
 m_seqtab_nochim <- as.matrix(seqtab_nochim) # convert to matrix
 t_seqtab_nochim <- t(m_seqtab_nochim) # Transpose
@@ -223,6 +228,8 @@ ps_initial <- create_phyloseq(
 ################################################################
 # (5) MARKER-SPECIFIC STEPS: COI
 ################################################################
+
+if (run_coi_branch) {
 
 ## (COI-A) DECONTAMINATION ##
 # Purpose: Remove contaminant sequences using decontam.
@@ -295,7 +302,6 @@ ps_curated <- curate_lulu(
 )
 Biostrings::writeXStringSet(refseq(ps_curated), filepath = curated_fasta_path)
 
-
 ## (COI-E) Generate Alternative BLAST script for input into STRI shiny app https://shiny.si.edu/ebbs_blast_filter ##
 # Purpose: Create a SLURM script to run BLAST on an HPC.
 # Input:   Curated OTU FASTA file and BLAST parameters.
@@ -332,7 +338,7 @@ alt_blast_script_configured <- gsub("__CPUS__", blast_cpus, alt_blast_script_con
 alt_blast_script_configured <- gsub("__MEM__", blast_mem, alt_blast_script_configured)
 alt_blast_script_configured <- gsub("__DB_NAME__", here("tax", blast_db_name), alt_blast_script_configured)
 alt_blast_script_configured <- gsub("__EVALUE__", alt_blast_evalue, alt_blast_script_configured)
-alt_blast_script_configured <- gsub("__QUERY_FILE__", curated_fasta_path, alt_blast_script_configured)
+alt_blast_script_configured <- gsub("__QUERY_FILE__", mifish_query_fasta, alt_blast_script_configured)
 alt_blast_script_configured <- gsub("__OUTPUT_FILE__", alt_blast_output_path, alt_blast_script_configured)
 alt_blast_script_configured <- gsub("__MAX_TARGET_SEQS__", alt_blast_max_target_seqs, alt_blast_script_configured)
 writeLines(c(alt_blast_header, alt_blast_script_configured), final_blast_alt_script_path)
@@ -348,12 +354,8 @@ message("This alternative BLAST output can be used for input into the STRI shiny
 # Purpose: Format BLAST results for the galaxy-tool-lca script.
 # Input:   BLAST output table.
 # Output:  A formatted text file for the LCA tool.
-
-# source(file.path(scripts_root, "COI_F_GalaxyLCA.R"))
 source(file.path(scripts_root, "COI_F_Alt_GalaxyLCA.R"))
 format_blast_for_lca(
-  #blast_output_path = blast_output_path,
-  #lca_input_path = lca_input_path,
   blast_output_path = alt_blast_output_path,
   lca_input_path = alt_lca_input_path,
   db_source_name = "MIDORI2_GB267"
@@ -361,10 +363,6 @@ format_blast_for_lca(
 message("\nACTION REQUIRED: Run galaxy-tool-lca in your terminal.")
 message("1. Navigate to your galaxy-tool-lca directory.")
 message("2. Run the command: module load python/3.13.2")
-lca_input_path          <- here(output_root, paste0(project_id, "_lca_input.txt"))
-lca_output_path         <- here(output_root, paste0(project_id, "_lca_assigned_taxonomy.txt"))
-final_phyloseq_path     <- here(output_root, paste0(project_id, "_final_phyloseq.rds"))
-# message("3. Run the command: python lca.py -i ", lca_input_path, " -o ", lca_output_path, " -b 8 -id 80 -cov 80 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
 message("3. Run the command: python lca.py -i ", alt_lca_input_path, " -o ", alt_lca_output_path, " -b 8 -id 70 -cov 70 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
 
 # Validation check for LCA output
@@ -401,20 +399,164 @@ if (file.exists(alt_lca_output_path)) {
 # Output:  The final, analysis-ready phyloseq object.
 source(file.path(scripts_root, "COI_G_FinalPhyloseq.R"))
 ps_final <- create_final_phyloseq(
-  #lca_output_path = lca_output_path,
   lca_output_path = alt_lca_output_path,
   curated_phyloseq_path = curated_phyloseq_path,
-  #final_phyloseq_path = final_phyloseq_path
   final_phyloseq_path = alt_final_phyloseq_path
 )
-# saveRDS(ps_final, final_phyloseq_path)
 saveRDS(ps_final, alt_final_phyloseq_path)
-# message("\nPIPELINE COMPLETE! The final phyloseq object is saved at: ", final_phyloseq_path)
 message("\nPIPELINE COMPLETE! The alternative final phyloseq object is saved at: ", alt_final_phyloseq_path)
 # can now proceed to MainScript_Plots.R for summary plots
+}
+
 
 ################################################################
-# (5b) MARKER-SPECIFIC STEPS: MiFish 12S
+# (5b) MARKER-SPECIFIC STEPS: MiFish-U 12S
 ################################################################
 
+if (!exists("ps_initial")) {
+  message("Resuming pipeline: Loading initial phyloseq object from previous run...")
+  ps_initial <- readRDS(phyloseq_path)
+}
+
+## (MiFish-A) DECONTAMINATION ##
+# Purpose: Remove contaminant sequences using decontam.
+# Input:   Initial phyloseq object.
+# Output:  Cleaned phyloseq object (`ps_clean`).
+source(file.path(scripts_root, "MiFish_A_Decontam.R"))
+decon_results <- run_MiFish_decontamination(
+  physeq = ps_initial,
+  output_dir = output_root,
+  project_id = project_id,
+  control_col = "sample_type",
+  neg_controls = c("extraction control", "field control", "pcr control"),
+  min_reads = decon_min_reads,
+  max_n_ratio = decon_max_n_ratio
+)
+ps_clean <- decon_results$phyloseq_clean
+saveRDS(ps_clean, decontaminated_ps_path) # Save for resumability
+seqs <- refseq(ps_clean)
+names(seqs) <- taxa_names(ps_clean)
+Biostrings::writeXStringSet(seqs, filepath = mifish_query_fasta)
+
+## (MiFish-B) Generate BLAST script ##
+# Purpose: Create a SLURM script to run BLAST on an HPC.
+# Input:   Curated ASV FASTA file and BLAST parameters.
+# Output:  A MiFish BLAST SLURM script in the output directory.
+if (!exists("ps_clean")) {
+  message("Resuming pipeline: Loading cleaned phyloseq object from previous run...")
+  ps_clean <- readRDS(decontaminated_ps_path)
+}
+seqs <- refseq(ps_clean)
+names(seqs) <- taxa_names(ps_clean)
+Biostrings::writeXStringSet(seqs, filepath = mifish_query_fasta)
+mifish_blast_max_target_seqs <- 50 # You can change this value as needed
+mifish_blast_evalue <- 10 # You can change this value as needed
+mifish_blast_template <- readLines(mifish_blast_template_path)
+mifish_blast_header <- c(
+  "#!/bin/bash",
+  "#SBATCH --account=def-barrett",
+  "#SBATCH --time=04:00:00",
+  "#SBATCH --cpus-per-task=10",
+  "#SBATCH --mem=4G",
+  "#SBATCH --job-name=blastn_mifish",
+  "#SBATCH --output=blastn_mifish_%j.out",
+  "#SBATCH --error=blastn_mifish_%j.err",
+  "#SBATCH --mail-user=paige.smallman@mail.mcgill.ca",
+  "#SBATCH --mail-type=END,FAIL",
+  "",
+  "module load blast+/2.17.0",
+  "",
+  "echo \"Running MiFish BLASTn...\""
+)
+mifish_blast_script_configured <- gsub("__ACCOUNT_NAME__", blast_account, mifish_blast_template)
+mifish_blast_script_configured <- gsub("__EMAIL__", blast_email, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__TIME__", blast_time, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__CPUS__", blast_cpus, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__MEM__", blast_mem, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__DB_NAME__", here("tax", blast_db_name), mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__EVALUE__", mifish_blast_evalue, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__QUERY_FILE__", mifish_query_fasta, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__OUTPUT_FILE__", mifish_blast_output_path, mifish_blast_script_configured)
+mifish_blast_script_configured <- gsub("__MAX_TARGET_SEQS__", mifish_blast_max_target_seqs, mifish_blast_script_configured)
+writeLines(c(mifish_blast_header, mifish_blast_script_configured), mifish_blast_script_path)
+system(paste("chmod +x", mifish_blast_script_path))
+message("\nACTION REQUIRED: Run BLAST on your HPC.")
+message("1. Navigate to the output directory: cd ", output_root)
+message("2. Submit the job: sbatch ", basename(mifish_blast_script_path))
+
+## (MiFish-C) PREPARE FOR GALAXY-LCA ##
+# Purpose: Format BLAST results for the galaxy-tool-lca script.
+# Input:   BLAST output table.
+# Output:  A formatted text file for the LCA tool.
+source(file.path(scripts_root, "MiFish_C_GalaxyLCA.R"))
+format_blast_for_lca(
+  blast_output_path = mifish_blast_output_path,
+  lca_input_path = mifish_lca_input_path,
+  db_source_name = db_source_name
+)
+message("\nACTION REQUIRED: Run galaxy-tool-lca in your terminal.")
+message("1. Navigate to your galaxy-tool-lca directory.")
+message("2. Run the command: module load python/3.13.2")
+message("3. Run the command: python lca.py -i ", mifish_lca_input_path, " -o ", mifish_lca_output_path, " -b 8 -id 70 -cov 70 -t best_hits_range -tid ", lca_tid, " -tcov ", lca_tcov, " -flh unknown")
+
+# Validation check for LCA output
+# outputs summary of ASVs processed and assigned taxonomy
+if (file.exists(mifish_lca_output_path)) {
+  message("\nCHECKPOINT: MiFish LCA output found.")
+  lca_data <- read.delim(mifish_lca_output_path, comment.char = "#", header = FALSE)
+  colnames(lca_data) <- c("#Query", "#lca rank", "#lca taxon", "#kingdom", "#phylum", "#class", "#order", "#family", "#genus", "#species", "#method", "#identity", "#coverage")
+  # Try to use column names for robustness
+  lca_rank_col <- NULL
+  possible_rank_names <- c("lca_rank", "LCA_Rank", "rank", "LCA_RANK", "#lca rank", "#lca rank ")
+  for (col in possible_rank_names) {
+    if (col %in% colnames(lca_data)) {
+      lca_rank_col <- col
+      break
+    }
+  }
+  if (!is.null(lca_rank_col)) {
+    n_total_asvs <- nrow(lca_data)
+    n_identified <- sum(!is.na(lca_data[[lca_rank_col]]) & lca_data[[lca_rank_col]] != "no identification")
+    message(sprintf("LCA Summary: %d total ASVs processed.", n_total_asvs))
+    message(sprintf("               %d ASVs (%.1f%%) received a taxonomy assignment.", n_identified, (n_identified/n_total_asvs)*100))
+  } else {
+    warning("LCA output does not have an expected 'lca_rank' column. Please check the output format. Column names are:")
+    print(colnames(lca_data))
+  }
+} else {
+  message("\nWARNING: MiFish LCA output file NOT found yet. Please run the python command above before proceeding to Step (G).")
+}
+
+## (MiFish-D) CREATE FINAL PHYLOSEQ OBJECT ##
+# Purpose: Combine curated OTU table with final LCA taxonomy.
+# Input:   Lulu-curated phyloseq object and LCA taxonomy results.
+# Output:  The final, analysis-ready phyloseq object.
+source(file.path(scripts_root, "MiFish_D_FinalPhyloseq.R"))
+ps_final <- create_final_phyloseq(
+  lca_output_path = mifish_lca_output_path,
+  curated_phyloseq_path = decontaminated_ps_path, # use the cleaned phyloseq object without clustering for MiFish since 12S is shorter and less variable than COI
+  final_phyloseq_path = mifish_final_phyloseq_path
+)
+saveRDS(ps_final, mifish_final_phyloseq_path)
+message("\nPIPELINE COMPLETE! The MiFish final phyloseq object is saved at: ", mifish_final_phyloseq_path)
+# can now proceed to MainScript_Plots.R for summary plots
+
+
+################################################################
+# PLOT SUMMARY GRAPHS ##
+################################################################
+
+source(file.path(scripts_root, "COI_H_SummaryPlots.R"))
+generate_summary_plots(
+  ps_object = ps_final,
+  figures_dir = figures_root,
+  project_id = project_id
+)
+
+source(file.path(scripts_root, "MiFish_H_SummaryPlots.R"))
+generate_summary_plots(
+  ps_object = ps_final,
+  figures_dir = figures_root,
+  project_id = project_id
+)
 
