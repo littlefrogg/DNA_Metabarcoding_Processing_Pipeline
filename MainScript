@@ -317,14 +317,14 @@ alt_blast_output_path <- here(output_root, "blast_alt_results.tsv")
 alt_blast_template <- readLines(alternative_blast_template_path)
 alt_blast_header <- c(
   "#!/bin/bash",
-  "#SBATCH --account=def-barrett",
+  "#SBATCH --account= blast_account",
   "#SBATCH --time=04:00:00",
   "#SBATCH --cpus-per-task=10",
   "#SBATCH --mem=4G",
   "#SBATCH --job-name=blastn_alt",
   "#SBATCH --output=blastn_alt_%j.out",
   "#SBATCH --error=blastn_alt_%j.err",
-  "#SBATCH --mail-user=paige.smallman@mail.mcgill.ca",
+  "#SBATCH --mail-user= blast_email",
   "#SBATCH --mail-type=END,FAIL",
   "",
   "module load blast+/2.17.0",
@@ -454,14 +454,14 @@ mifish_blast_evalue <- 10 # You can change this value as needed
 mifish_blast_template <- readLines(mifish_blast_template_path)
 mifish_blast_header <- c(
   "#!/bin/bash",
-  "#SBATCH --account=def-barrett",
+  "#SBATCH --account=blast_account",
   "#SBATCH --time=04:00:00",
   "#SBATCH --cpus-per-task=10",
   "#SBATCH --mem=4G",
   "#SBATCH --job-name=blastn_mifish",
   "#SBATCH --output=blastn_mifish_%j.out",
   "#SBATCH --error=blastn_mifish_%j.err",
-  "#SBATCH --mail-user=paige.smallman@mail.mcgill.ca",
+  "#SBATCH --mail-user=blast_email",
   "#SBATCH --mail-type=END,FAIL",
   "",
   "module load blast+/2.17.0",
